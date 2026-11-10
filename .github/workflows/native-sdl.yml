@@ -8,6 +8,7 @@ on:
       - 'source/**'
       - 'ps5/kitchensink_mpv.*'
       - 'scripts/build-native-ps5.sh'
+      - 'scripts/patch-ps5-linker.py'
       - '.github/workflows/native-sdl.yml'
 
 permissions:

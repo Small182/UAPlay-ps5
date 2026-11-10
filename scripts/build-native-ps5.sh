@@ -41,6 +41,9 @@ if [[ -f "$project/source/tmdb_build_key.h" ]]; then
 fi
 ln -s "$PS5_SDL_PREFIX/lib/libSDL2.a" "$app/.local/sdk/libSDL2.a"
 cp "$project/ps5/icon0.png" "$app/sce_sys/icon0.png"
+# PacBrew's .pc files contain Linux-only linker flags even for their PS5
+# archives. Normalize the flags in the throwaway pinned template checkout.
+python3 "$project/scripts/patch-ps5-linker.py" "$app/tools/build.sh"
 
 (
     cd "$app"
