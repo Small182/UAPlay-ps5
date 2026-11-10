@@ -79,10 +79,10 @@ jobs:
           python3 /tmp/uaplay-ps5-opengl/integration/SDL2/build.py native \
             --sdl-source /tmp/uaplay-ps5-sdl-source \
             --sdk-prefix /tmp/uaplay-ps5-opengl/ps5-opengl-sdk-1.0.2/sdk \
-            --out /tmp/uaplay-ps5-sdl-build \
+            --out /tmp/uaplay-ps5-opengl/build/uaplay-sdl-bridge \
             --payload-sdk /tmp/uaplay-ps5-title-template/.deps/native/ps5-payload-sdk \
             --compiler-wrapper /tmp/uaplay-ps5-title-template/tooling/prospero-clang18
-          test -s /tmp/uaplay-ps5-sdl-build/sdk/lib/libSDL2.a
+          test -s /tmp/uaplay-ps5-opengl/build/uaplay-sdl-bridge/sdk/lib/libSDL2.a
       - name: Generate embedded TMDb build key
         env:
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
@@ -91,7 +91,7 @@ jobs:
         env:
           PS5_NATIVE_TEMPLATE: /tmp/uaplay-ps5-title-template
           PS5_OPENGL_PREFIX: /tmp/uaplay-ps5-opengl/ps5-opengl-sdk-1.0.2/sdk
-          PS5_SDL_PREFIX: /tmp/uaplay-ps5-sdl-build/sdk
+          PS5_SDL_PREFIX: /tmp/uaplay-ps5-opengl/build/uaplay-sdl-bridge/sdk
           PS5_NATIVE_OUTPUT: /tmp/uaplay-ps5-output
         run: bash scripts/build-native-ps5.sh
       - name: Archive native title folder (not hardware validated)
