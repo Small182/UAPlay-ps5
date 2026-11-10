@@ -173,3 +173,26 @@ ssize_t recvmmsg(int fd, struct mmsghdr *messages, size_t count,
 __asm__(".globl _setjmp\n.type _setjmp,@function\n_setjmp:\n jmp setjmp\n"
         ".globl _longjmp\n.type _longjmp,@function\n_longjmp:\n jmp longjmp\n");
 #endif
+
+/* libzstd's optional weak tracing callbacks are unresolved in the PacBrew
+ * archive. A zero context explicitly disables tracing; decoding is unchanged.
+ * Keep the public zstd_trace.h calling convention (64-bit context). */
+unsigned long long ZSTD_trace_compress_begin(const void *context) {
+    (void)context;
+    return 0;
+}
+
+unsigned long long ZSTD_trace_decompress_begin(const void *context) {
+    (void)context;
+    return 0;
+}
+
+void ZSTD_trace_compress_end(unsigned long long context, const void *trace) {
+    (void)context;
+    (void)trace;
+}
+
+void ZSTD_trace_decompress_end(unsigned long long context, const void *trace) {
+    (void)context;
+    (void)trace;
+}
