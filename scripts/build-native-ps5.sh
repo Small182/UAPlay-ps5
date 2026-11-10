@@ -35,6 +35,7 @@ mkdir -p "$app/src/runtime" "$app/ps5" "$app/.local/sdk"
 cp -a "$app/src-base/runtime/." "$app/src/runtime/"
 cp "$project"/source/*.c "$project"/source/*.h "$app/src/"
 cp "$project/ps5/kitchensink_mpv.c" "$app/src/kitchensink_mpv.c"
+cp "$project/ps5/posix_compat.c" "$app/src/posix_compat.c"
 cp "$project/ps5/kitchensink_mpv.h" "$app/ps5/"
 if [[ -f "$project/source/tmdb_build_key.h" ]]; then
     cp "$project/source/tmdb_build_key.h" "$app/src/tmdb_build_key.h"
