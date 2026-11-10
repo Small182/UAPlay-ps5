@@ -18,6 +18,9 @@
 #include "library.h"
 #include "playback.h"
 #include "platform_paths.h"
+#ifdef __PS5__
+#include "../ps5/evo_bridge.h"
+#endif
 
 typedef enum { CATALOG, DETAILS, SOURCES, PLAYER, SETTINGS,
                SEASONS, EPISODES, TRACK_PICKER, VIDEO_SETTINGS } Page;
@@ -1542,6 +1545,15 @@ static void configure_stream(mpv_handle *player,const char *url) {
         mpv_set_property_string(player,"referrer","https://hdvbua.pro/");
     else mpv_set_property_string(player,"referrer","");
 }
+#ifdef __PS5__
+static int handoff_stream_ps5(const char *url,const char *title,
+                               char *message,size_t message_size) {
+    /* The native host must embed EVO and keep its loopback endpoint running.
+       An installed standalone EVO title is not reachable this way. */
+    if(uaplay_evo_handoff(url,title,message,message_size)!=0)return 0;
+    return 1;
+}
+#endif
 static int keyboard(char *value,size_t size) {
 #ifdef __PS5__
     /* TODO: connect native PS5 IME; do not call the unavailable libnx SWKBD. */
@@ -2035,7 +2047,13 @@ int main(void) {
                    selected_episode<episodes_in_season(season_ids[selected_season])-1)selected_episode++;
                 if(key==SDL_CONTROLLER_BUTTON_A){
                     Episode *episode=selected_episode_item();
-                    if(episode && render){
+                    if(episode && (
+#ifdef __PS5__
+                       1
+#else
+                       render!=NULL
+#endif
+                       )){
                         Source episode_source={0};
                         snprintf(episode_source.url,sizeof(episode_source.url),"%s",episode->url);
                         char url[2048]={0};message[0]=0;
@@ -2049,16 +2067,22 @@ int main(void) {
                                        &saved_season,&saved_episode,&saved_seconds) &&
                                        saved_season==episode->season &&
                                        saved_episode==episode->number)?saved_seconds:0;
+#ifdef __PS5__
+                            if(!handoff_stream_ps5(url,playing_movie.title,
+                                                   message,sizeof(message)))continue;
+#endif
                             library_mark_watched(&playing_movie);
                             library_set_episode_progress(&playing_movie,
                                 episode->season,episode->number,resume_at);
                             snprintf(playing_url,sizeof(playing_url),"%s",url);
+ #ifndef __PS5__
                             apply_hls_quality(player);
                             configure_stream(player,url);
                             command(player,"loadfile",url);
                             video_started_at=SDL_GetTicks();video_loaded=0;
                             controls_until=SDL_GetTicks()+3000;
                             player_return_page=EPISODES;page=PLAYER;
+ #endif
                         }
                     } else if(!render) snprintf(message,sizeof(message),"Плеєр mpv не ініціалізовано");
                 }
@@ -2352,20 +2376,30 @@ int main(void) {
                     }
                     char url[2048]={0};
                     message[0]=0;
-                    if(!render){
+                    if(!render
+#ifdef __PS5__
+                       && 0
+#endif
+                       ){
                         snprintf(message,sizeof(message),"Плеєр mpv не ініціалізовано");
                     }else if(uakino_resolve(&sources[source],url,sizeof(url),message,sizeof(message))){
+#ifdef __PS5__
+                        if(!handoff_stream_ps5(url,movies[chosen].title,
+                                               message,sizeof(message)))continue;
+#endif
                         snprintf(pending_subtitle,sizeof(pending_subtitle),"%s",uakino_resolved_subtitle());
                         playing_movie=movies[chosen];
                         resume_at=library_progress(&playing_movie);
                         library_mark_watched(&playing_movie);
                         snprintf(playing_url,sizeof(playing_url),"%s",url);
+#ifndef __PS5__
                         apply_hls_quality(player);
                         configure_stream(player,url);
                         command(player,"loadfile",url);
                         video_started_at=SDL_GetTicks();video_loaded=0;
                         controls_until=SDL_GetTicks()+3000;
                         player_return_page=SOURCES;page=PLAYER;
+#endif
                     }
                 }
             }
