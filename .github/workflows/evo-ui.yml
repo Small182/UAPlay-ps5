@@ -1,0 +1,33 @@
+name: EVO-based UAPlay frontend checks
+
+on:
+  push:
+    branches: [evo-host]
+    paths:
+      - 'ps5/webui/**'
+      - '.github/workflows/evo-ui.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate JavaScript syntax
+        run: node --check ps5/webui/app.js
+      - name: Check UI assets
+        run: |
+          test -s ps5/webui/index.html
+          test -s ps5/webui/style.css
+          test -s ps5/webui/InterVariable.ttf
+          python3 -c 'import json; [json.load(open("ps5/webui/"+n+".json")) for n in ("top","movies","series")]'
+      - name: Package frontend prototype (not a PS5 title)
+        run: tar -C ps5 -czf UAPlay-EVO-webui-prototype.tar.gz webui
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UAPlay-EVO-webui-prototype-NOT-PS5-APP
+          path: UAPlay-EVO-webui-prototype.tar.gz
+          if-no-files-found: error
