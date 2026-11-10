@@ -35,7 +35,8 @@ The [`native-sdl.yml`](.github/workflows/native-sdl.yml) workflow:
 3. Downloads the public PS5 OpenGL SDK 1.0.2 from the `darkxex/ps5-opengl`
    preservation release, checking the exact published SHA-256 digest.
 4. Builds a real SDL2/OpenGL PS5 backend with the SDK's integration scripts.
-5. Resolves PacBrew `SDL2_ttf`, `SDL2_image`, `libcurl` and `SDL2_kitchensink`
+5. Resolves PacBrew `SDL2_ttf`, `SDL2_image`, `libcurl`, `SDL_kitchensink`
+   and FFmpeg/libass static dependencies,
    ports, compiles the original UAPlay C files and its native decoder adapter.
 6. Packages `PPSA99282/eboot.bin`, native runtime modules, fonts and metadata.
 

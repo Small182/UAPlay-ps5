@@ -50,7 +50,7 @@ cp "$project/ps5/icon0.png" "$app/sce_sys/icon0.png"
     PS5_OPENGL_PREFIX="$PS5_OPENGL_PREFIX" \
     APP_DEFINITIONS='__PS5__ SDL_MAIN_HANDLED' \
     APP_STATIC_ARCHIVES='.local/sdk/libSDL2.a' \
-    PACBREW_PACKAGES='SDL2_ttf SDL2_image libcurl SDL2_kitchensink' \
+    PACBREW_PACKAGES='SDL2_ttf SDL2_image libcurl SDL_kitchensink libavformat libavcodec libavutil libswscale libswresample libass' \
     make app
 )
 

@@ -58,6 +58,7 @@ jobs:
         run: |
           git clone --quiet "$PS5_UI_REPO" /tmp/uaplay-ps5-title-template
           git -C /tmp/uaplay-ps5-title-template checkout --detach "$PS5_UI_REV"
+          chmod +x /tmp/uaplay-ps5-title-template/tooling/prospero-clang18
           bash /tmp/uaplay-ps5-title-template/tools/setup-native-dependencies.sh
       - name: Check out pinned PS5 OpenGL sources
         run: |
