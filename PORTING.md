@@ -65,8 +65,8 @@ Actions secret, generated as an untracked header in CI.
 
 ## Unresolved verification points
 
-- The PS5 SDL2 GL bridge and SDL_kitchensink ports must link together without
-  pulling the older SDL2 video backend from PacBrew.
+- The PS5 SDL2 GL bridge and SDL_kitchensink ports have linked successfully
+  in CI, but the output must be exercised on console hardware.
 - Check the `SDL_PIXELFORMAT_RGBA32` → OpenGL RGBA upload path, orientation and
   display timing on the actual console.
 - Test FFmpeg network streams (HTTP/HLS/HTTPS), audio synchronization, seek,
