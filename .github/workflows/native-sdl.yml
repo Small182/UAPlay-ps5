@@ -13,6 +13,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: native-sdl-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   portable:
     runs-on: ubuntu-24.04
@@ -59,27 +63,22 @@ jobs:
         run: |
           git clone --quiet "$PS5_OPENGL_REPO" /tmp/uaplay-ps5-opengl
           git -C /tmp/uaplay-ps5-opengl checkout --detach "$PS5_OPENGL_REV"
-      - name: Restore native GPU SDK cache
-        uses: actions/cache@v4
-        with:
-          path: /tmp/uaplay-ps5-opengl/build/sdk/ps5-opengl-gl46
-          key: uaplay-ps5-gl46-${{ env.PS5_OPENGL_REV }}-ubuntu24
-      - name: Build public PS5 OpenGL 4.6 SDK if not cached
+      - name: Download and verify archived OpenGL 4.6 SDK (SHA-256 pinned)
         run: |
-          if [ ! -f /tmp/uaplay-ps5-opengl/build/sdk/ps5-opengl-gl46/manifest.sha256 ]; then
-            make -C /tmp/uaplay-ps5-opengl source-fetch
-            make -C /tmp/uaplay-ps5-opengl sdk-gl46 \
-              PS5_NATIVE_APP_TEMPLATE=/tmp/uaplay-ps5-title-template \
-              PS5_PAYLOAD_SDK=/tmp/uaplay-ps5-title-template/.deps/native/ps5-payload-sdk
-          fi
-          test -f /tmp/uaplay-ps5-opengl/build/sdk/ps5-opengl-gl46/manifest.sha256
+          curl --fail --location --retry 3 --silent --show-error \
+            'https://github.com/darkxex/ps5-opengl/releases/download/v1.0.2/ps5-opengl-sdk-1.0.2.tar.gz' \
+            -o /tmp/uaplay-ps5-opengl-sdk.tgz
+          echo '30d8e51dd062739b629346102be5932728ba714bc50b1bdcdf08306c8843d9a4  /tmp/uaplay-ps5-opengl-sdk.tgz' | sha256sum --check --strict
+          tar -xzf /tmp/uaplay-ps5-opengl-sdk.tgz -C /tmp/uaplay-ps5-opengl \
+            ps5-opengl-sdk-1.0.2/sdk ps5-opengl-sdk-1.0.2/LICENSE
+          test -f /tmp/uaplay-ps5-opengl/ps5-opengl-sdk-1.0.2/sdk/manifest.sha256
       - name: Build real SDL2 native OpenGL bridge
         run: |
           git clone --quiet "$PS5_SDL_REPO" /tmp/uaplay-ps5-sdl-source
           git -C /tmp/uaplay-ps5-sdl-source checkout --detach "$PS5_SDL_REV"
           python3 /tmp/uaplay-ps5-opengl/integration/SDL2/build.py native \
             --sdl-source /tmp/uaplay-ps5-sdl-source \
-            --sdk-prefix /tmp/uaplay-ps5-opengl/build/sdk/ps5-opengl-gl46 \
+            --sdk-prefix /tmp/uaplay-ps5-opengl/ps5-opengl-sdk-1.0.2/sdk \
             --out /tmp/uaplay-ps5-sdl-build \
             --payload-sdk /tmp/uaplay-ps5-title-template/.deps/native/ps5-payload-sdk \
             --compiler-wrapper /tmp/uaplay-ps5-title-template/tooling/prospero-clang18
@@ -91,7 +90,7 @@ jobs:
       - name: Cross-compile the actual UAPlay interface and playback adapter
         env:
           PS5_NATIVE_TEMPLATE: /tmp/uaplay-ps5-title-template
-          PS5_OPENGL_PREFIX: /tmp/uaplay-ps5-opengl/build/sdk/ps5-opengl-gl46
+          PS5_OPENGL_PREFIX: /tmp/uaplay-ps5-opengl/ps5-opengl-sdk-1.0.2/sdk
           PS5_SDL_PREFIX: /tmp/uaplay-ps5-sdl-build/sdk
           PS5_NATIVE_OUTPUT: /tmp/uaplay-ps5-output
         run: bash scripts/build-native-ps5.sh

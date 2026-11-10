@@ -32,14 +32,14 @@ The [`native-sdl.yml`](.github/workflows/native-sdl.yml) workflow:
 
 1. Runs the portable catalog tests.
 2. Uses a pinned public PS5 homebrew title template.
-3. Builds the public PS5 OpenGL SDK from the `darkxex/ps5-opengl` preservation
-   fork, because the original upstream repository is currently unavailable.
+3. Downloads the public PS5 OpenGL SDK 1.0.2 from the `darkxex/ps5-opengl`
+   preservation release, checking the exact published SHA-256 digest.
 4. Builds a real SDL2/OpenGL PS5 backend with the SDK's integration scripts.
 5. Resolves PacBrew `SDL2_ttf`, `SDL2_image`, `libcurl` and `SDL2_kitchensink`
    ports, compiles the original UAPlay C files and its native decoder adapter.
 6. Packages `PPSA99282/eboot.bin`, native runtime modules, fonts and metadata.
 
-OpenGL/Mesa compilation can take considerable time. The workflow's output is
+SDL bridge and library compilation can take considerable time. The workflow's output is
 named `UAPlay-PS5-native-UNTESTED` on purpose: a successful link does not imply
 that the video renderer, input and codecs work on firmware 13.60.
 
