@@ -18,6 +18,10 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Install catalog test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev
       - name: Verify native UI source and portable catalogue tests
         run: |
           bash scripts/test-portable.sh
