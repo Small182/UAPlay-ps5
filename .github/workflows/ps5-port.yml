@@ -1,0 +1,23 @@
+name: UAPlay PS5 port checks
+
+on:
+  push:
+    branches: [main, ps5-port]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  portable-code:
+    name: Portable catalog regression checks
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install host test dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libcurl4-openssl-dev
+      - name: Check portable source
+        run: bash scripts/test-portable.sh
+      - name: Record native build status
+        run: |
+          echo 'Native PS5 executable: not yet buildable in this workflow.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Open blockers: PS5 libmpv with GL render API, native app bootstrapping and SDK packaging.' >> "$GITHUB_STEP_SUMMARY"
+
