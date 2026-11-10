@@ -443,7 +443,11 @@ int catalog_load_page_sorted(const char *category, const char *query, int page,
     char key[256];
     tmdb_key(key,sizeof(key));
     if (!key[0]) {
+#ifdef __PS5__
+        snprintf(error,error_size,"TMDb: не задано ключ (GitHub Actions TMDB_API_KEY)");
+#else
         snprintf(error,error_size,"TMDB: додайте /switch/uaplay/tmdb.key на SD-карту");
+#endif
         return 0;
     }
 

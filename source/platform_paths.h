@@ -1,9 +1,9 @@
 #ifndef UAPLAY_PLATFORM_PATHS_H
 #define UAPLAY_PLATFORM_PATHS_H
 
-/* Native PS5 title stores writable state outside its installed application. */
+/* A native PS5 title's writable sandbox mount. Never write into /app0. */
 #ifdef __PS5__
-#define UAPLAY_DATA_ROOT "/data/uaplay"
+#define UAPLAY_DATA_ROOT "/download0/uaplay"
 #define UAPLAY_CATALOG_DIR UAPLAY_DATA_ROOT
 #define UAPLAY_LIBRARY_DIR UAPLAY_DATA_ROOT "/library"
 #define UAPLAY_POSTER_DIR UAPLAY_DATA_ROOT "/posters"

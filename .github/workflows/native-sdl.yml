@@ -1,0 +1,100 @@
+name: UAPlay PS5 native SDL + FFmpeg (experimental)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [native-sdl]
+    paths:
+      - 'source/**'
+      - 'ps5/kitchensink_mpv.*'
+      - 'scripts/build-native-ps5.sh'
+      - '.github/workflows/native-sdl.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  portable:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify native UI source and portable catalogue tests
+        run: |
+          bash scripts/test-portable.sh
+          bash -n scripts/build-native-ps5.sh
+          test -f ps5/kitchensink_mpv.c
+          ! rg -n 'handoff_stream_ps5|uaplay_evo_handoff|Opening Nuvio' source/main.c ps5/kitchensink_mpv.c
+
+  native:
+    needs: portable
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    env:
+      PS5_OPENGL_REPO: https://github.com/darkxex/ps5-opengl.git
+      PS5_OPENGL_REV: 6b6bb2039f741287ed7f1bc6bc4b2c589709a0ba
+      PS5_UI_REPO: https://github.com/leolobato/ps5-homebrew-ui.git
+      PS5_UI_REV: 0a6fb4b851da86cd4e9512aae3abf1352a96086a
+      PS5_SDL_REPO: https://github.com/ps5-payload-dev/SDL.git
+      PS5_SDL_REV: 8c56053f13ca13a0c050de613706ff69eb615836
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install public native cross-build toolchain requirements
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 lld-18 git curl wget unzip rsync \
+            build-essential pkg-config python3 python3-pip python3-mako \
+            python3-yaml python3-packaging python3-venv cmake ninja-build \
+            meson bison flex glslang-tools spirv-tools libegl1-mesa-dev \
+            libgl-dev libcurl4-openssl-dev
+      - name: Retrieve pinned native title skeleton
+        run: |
+          git clone --quiet "$PS5_UI_REPO" /tmp/uaplay-ps5-title-template
+          git -C /tmp/uaplay-ps5-title-template checkout --detach "$PS5_UI_REV"
+          bash /tmp/uaplay-ps5-title-template/tools/setup-native-dependencies.sh
+      - name: Check out pinned PS5 OpenGL sources
+        run: |
+          git clone --quiet "$PS5_OPENGL_REPO" /tmp/uaplay-ps5-opengl
+          git -C /tmp/uaplay-ps5-opengl checkout --detach "$PS5_OPENGL_REV"
+      - name: Restore native GPU SDK cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/uaplay-ps5-opengl/build/sdk/ps5-opengl-gl46
+          key: uaplay-ps5-gl46-${{ env.PS5_OPENGL_REV }}-ubuntu24
+      - name: Build public PS5 OpenGL 4.6 SDK if not cached
+        run: |
+          if [ ! -f /tmp/uaplay-ps5-opengl/build/sdk/ps5-opengl-gl46/manifest.sha256 ]; then
+            make -C /tmp/uaplay-ps5-opengl source-fetch
+            make -C /tmp/uaplay-ps5-opengl sdk-gl46 \
+              PS5_NATIVE_APP_TEMPLATE=/tmp/uaplay-ps5-title-template \
+              PS5_PAYLOAD_SDK=/tmp/uaplay-ps5-title-template/.deps/native/ps5-payload-sdk
+          fi
+          test -f /tmp/uaplay-ps5-opengl/build/sdk/ps5-opengl-gl46/manifest.sha256
+      - name: Build real SDL2 native OpenGL bridge
+        run: |
+          git clone --quiet "$PS5_SDL_REPO" /tmp/uaplay-ps5-sdl-source
+          git -C /tmp/uaplay-ps5-sdl-source checkout --detach "$PS5_SDL_REV"
+          python3 /tmp/uaplay-ps5-opengl/integration/SDL2/build.py native \
+            --sdl-source /tmp/uaplay-ps5-sdl-source \
+            --sdk-prefix /tmp/uaplay-ps5-opengl/build/sdk/ps5-opengl-gl46 \
+            --out /tmp/uaplay-ps5-sdl-build \
+            --payload-sdk /tmp/uaplay-ps5-title-template/.deps/native/ps5-payload-sdk \
+            --compiler-wrapper /tmp/uaplay-ps5-title-template/tooling/prospero-clang18
+          test -s /tmp/uaplay-ps5-sdl-build/sdk/lib/libSDL2.a
+      - name: Generate embedded TMDb build key
+        env:
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+        run: bash scripts/prepare-tmdb-key.sh
+      - name: Cross-compile the actual UAPlay interface and playback adapter
+        env:
+          PS5_NATIVE_TEMPLATE: /tmp/uaplay-ps5-title-template
+          PS5_OPENGL_PREFIX: /tmp/uaplay-ps5-opengl/build/sdk/ps5-opengl-gl46
+          PS5_SDL_PREFIX: /tmp/uaplay-ps5-sdl-build/sdk
+          PS5_NATIVE_OUTPUT: /tmp/uaplay-ps5-output
+        run: bash scripts/build-native-ps5.sh
+      - name: Archive native title folder (not hardware validated)
+        run: tar -czf UAPlay-PS5-native-candidate.tar.gz -C /tmp/uaplay-ps5-output PPSA99282
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UAPlay-PS5-native-UNTESTED
+          path: UAPlay-PS5-native-candidate.tar.gz
+          if-no-files-found: error

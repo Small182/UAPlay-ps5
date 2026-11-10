@@ -1,7 +1,13 @@
-# Build status
+# Native build status
 
-The repository contains the complete imported Switch sources and the initial PS5 platform adaptation.
+`native-sdl` branch: real UAPlay UI sources, PlayStation controller hints,
+OpenGL Core 3.3 shader migration and SDL_kitchensink/FFmpeg playback adapter
+are implemented as **source changes**.
 
-GitHub Actions currently runs **portable C regression tests**, not a PS5 binary build. A runnable PS5 title is blocked on video/audio backend porting, application bootstrap, SDK packaging and hardware tests.
+Portable catalog regression tests run locally. The PS5 cross-link and
+firmware-13.60 hardware playback have **not** been confirmed. This is an
+experimental native candidate, **not a ready-to-install release**.
 
-See [PORTING.md](PORTING.md) for the checklist.
+The `evo-host`/Nuvio experiment is abandoned for this port. A successful
+`ps5-bootstrap.yml` or portable-test workflow is not evidence of a working
+UAPlay PS5 application. See [PORTING.md](PORTING.md).

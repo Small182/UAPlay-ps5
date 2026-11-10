@@ -2,6 +2,10 @@
 
 #include <SDL.h>
 #include <SDL_image.h>
+#ifdef __PS5__
+#define GL_GLEXT_PROTOTYPES 1
+#include <GL/glcorearb.h>
+#endif
 #include <curl/curl.h>
 #include <stdint.h>
 #include <stdio.h>

@@ -4,23 +4,27 @@
 #include <time.h>
 #include <math.h>
 #include <sys/stat.h>
+#ifdef __PS5__
+#include <unistd.h>
+#define GL_GLEXT_PROTOTYPES 1
+#include <GL/glcorearb.h>
+#include "../ps5/kitchensink_mpv.h"
+#else
+#include <GLES2/gl2.h>
+#include <mpv/client.h>
+#include <mpv/render_gl.h>
+#endif
 #ifdef __SWITCH__
 #include <switch.h>
 #endif
 #include <SDL.h>
 #include <SDL_ttf.h>
-#include <GLES2/gl2.h>
-#include <mpv/client.h>
-#include <mpv/render_gl.h>
 #include <curl/curl.h>
 #include "catalog.h"
 #include "posters.h"
 #include "library.h"
 #include "playback.h"
 #include "platform_paths.h"
-#ifdef __PS5__
-#include "../ps5/evo_bridge.h"
-#endif
 
 typedef enum { CATALOG, DETAILS, SOURCES, PLAYER, SETTINGS,
                SEASONS, EPISODES, TRACK_PICKER, VIDEO_SETTINGS } Page;
@@ -483,6 +487,9 @@ static int load_category(int category,const char *query,Movie *movies,char *mess
 }
 typedef struct {
     GLuint program, vbo, tex, solid_tex;
+#ifdef __PS5__
+    GLuint vao;
+#endif
     GLint tint, shape, gradient, outline, sampler;
     TTF_Font *font;
     TTF_Font *font_big;
@@ -520,9 +527,17 @@ static TTF_Font *choose_font(Paint *p,const char *s){
     return p->font;
 }
 
+#ifdef __PS5__
+static const char *vs = "#version 330 core\n"
+                        "in vec2 pos;in vec2 uv;out vec2 tc;"
+                        "void main(){gl_Position=vec4(pos,0.,1.);tc=uv;}";
+static const char *fs = "#version 330 core\n"
+                        "in vec2 tc;out vec4 fragColor;"
+#else
 static const char *vs = "attribute vec2 pos;attribute vec2 uv;varying vec2 tc;"
                         "void main(){gl_Position=vec4(pos,0.,1.);tc=uv;}";
 static const char *fs = "precision mediump float;varying vec2 tc;"
+#endif
                         "uniform vec4 tint;uniform sampler2D image;uniform vec3 shape;"
                         "uniform float gradient;uniform float outline;"
                         "void main(){vec2 p=tc*shape.xy;vec2 q=abs(p-shape.xy*.5)"
@@ -538,7 +553,11 @@ static const char *fs = "precision mediump float;varying vec2 tc;"
                         "vec3(.902,.907,.914),tc.y);"
                         "else if(gradient>.5)rgb=mix(vec3(.205,.208,.213),"
                         "vec3(.135,.139,.145),tc.y);"
+#ifdef __PS5__
+                        "fragColor=texture(image,tc)*vec4(rgb,tint.a)*a;}";
+#else
                         "gl_FragColor=texture2D(image,tc)*vec4(rgb,tint.a)*a;}";
+#endif
 static void *proc(void *ctx, const char *name) {
     (void)ctx; return SDL_GL_GetProcAddress(name);
 }
@@ -546,9 +565,20 @@ static GLuint compile(GLenum type, const char *source) {
     GLuint s = glCreateShader(type);
     glShaderSource(s, 1, &source, NULL);
     glCompileShader(s);
+#ifdef __PS5__
+    GLint ok=0;glGetShaderiv(s,GL_COMPILE_STATUS,&ok);
+    if(!ok){
+        char error[1024]={0};glGetShaderInfoLog(s,sizeof(error),NULL,error);
+        fprintf(stderr,"[UAPlay] GLSL compile failed: %s\n",error);
+    }
+#endif
     return s;
 }
 static int paint_init(Paint *p) {
+#ifdef __PS5__
+    glGenVertexArrays(1,&p->vao);
+    glBindVertexArray(p->vao);
+#endif
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     GLuint vert=compile(GL_VERTEX_SHADER, vs), frag=compile(GL_FRAGMENT_SHADER, fs);
@@ -560,7 +590,13 @@ static int paint_init(Paint *p) {
     glDeleteShader(vert); glDeleteShader(frag);
     GLint linked=0;
     glGetProgramiv(p->program,GL_LINK_STATUS,&linked);
-    if (!linked) return 0;
+    if (!linked) {
+#ifdef __PS5__
+        char error[1024]={0};glGetProgramInfoLog(p->program,sizeof(error),NULL,error);
+        fprintf(stderr,"[UAPlay] GLSL link failed: %s\n",error);
+#endif
+        return 0;
+    }
     p->tint=glGetUniformLocation(p->program,"tint");
     p->shape=glGetUniformLocation(p->program,"shape");
     p->gradient=glGetUniformLocation(p->program,"gradient");
@@ -1450,7 +1486,13 @@ static void draw_player_controls(Paint *p,mpv_handle *player) {
     text_tiny(p,"UAPlay  ·  Відтворення",35,519,430);
     if(active_episode_variant>=0 &&
        catalog_next_episode(episodes,episode_count,active_episode_variant)>=0)
-        text_tiny(p,"L — Наступна серія",790,519,310);
+        text_tiny(p,
+#ifdef __PS5__
+                  "L1 — Наступна серія",
+#else
+                  "L — Наступна серія",
+#endif
+                  790,519,310);
     box_alpha(p,126,566,1028,6,.34f,.39f,.44f,1.f,3);
     int filled=duration>0?(int)(1028.0*pos/duration):0;
     if(filled<0)filled=0;if(filled>1028)filled=1028;
@@ -1494,7 +1536,13 @@ static void draw_next_episode_prompt(Paint *p,const Episode *next,int seconds){
     char timer[128];
     snprintf(timer,sizeof(timer),"Автозапуск через %d с",seconds);
     text_small(p,timer,286,376,681);
-    text_small(p,"A — дивитися зараз     B — скасувати",286,448,690);
+    text_small(p,
+#ifdef __PS5__
+               "✕ — дивитися зараз     ◯ — скасувати",
+#else
+               "A — дивитися зараз     B — скасувати",
+#endif
+               286,448,690);
 }
 static int native_button(int button) {
 #ifdef __PS5__
@@ -1545,15 +1593,6 @@ static void configure_stream(mpv_handle *player,const char *url) {
         mpv_set_property_string(player,"referrer","https://hdvbua.pro/");
     else mpv_set_property_string(player,"referrer","");
 }
-#ifdef __PS5__
-static int handoff_stream_ps5(const char *url,const char *title,
-                               char *message,size_t message_size) {
-    /* The native host must embed EVO and keep its loopback endpoint running.
-       An installed standalone EVO title is not reachable this way. */
-    if(uaplay_evo_handoff(url,title,message,message_size)!=0)return 0;
-    return 1;
-}
-#endif
 static int keyboard(char *value,size_t size) {
 #ifdef __PS5__
     /* TODO: connect native PS5 IME; do not call the unavailable libnx SWKBD. */
@@ -1570,6 +1609,9 @@ static int keyboard(char *value,size_t size) {
 }
 int main(void) {
 #ifdef __PS5__
+    fprintf(stderr,"[UAPlay] native SDL UI booting (no browser host)\n");
+    SDL_SetMainReady();
+    chdir("/app0");
     mkdir(UAPLAY_DATA_ROOT,0777);
     mkdir(UAPLAY_CATALOG_DIR,0777);
     curl_global_init(CURL_GLOBAL_DEFAULT);
@@ -1583,17 +1625,35 @@ int main(void) {
     if (R_SUCCEEDED(network_result)) curl_global_init(CURL_GLOBAL_DEFAULT);
 #endif
     SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS,"1");
-    if(SDL_Init(SDL_INIT_VIDEO|SDL_INIT_GAMECONTROLLER)) return 1;
+    if(SDL_Init(SDL_INIT_VIDEO|SDL_INIT_GAMECONTROLLER|SDL_INIT_AUDIO)) {
+        fprintf(stderr,"[UAPlay] SDL_Init failed: %s\n",SDL_GetError());
+        return 1;
+    }
     catalog_http_init();
+#ifdef __PS5__
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK,SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION,3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION,3);
+#else
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK,SDL_GL_CONTEXT_PROFILE_ES);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION,3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION,0);
+#endif
     SDL_Window *window=SDL_CreateWindow("UAPlay",0,0,1280,720,SDL_WINDOW_OPENGL|SDL_WINDOW_SHOWN);
-    if(!window) { SDL_Quit();return 2; }
+    if(!window) {
+        fprintf(stderr,"[UAPlay] SDL_CreateWindow failed: %s\n",SDL_GetError());
+        SDL_Quit();return 2;
+    }
     SDL_GLContext gl=SDL_GL_CreateContext(window);
-    if(!gl) { SDL_DestroyWindow(window);SDL_Quit();return 3; }
+    if(!gl) {
+        fprintf(stderr,"[UAPlay] SDL_GL_CreateContext failed: %s\n",SDL_GetError());
+        SDL_DestroyWindow(window);SDL_Quit();return 3;
+    }
     Paint paint={0};
-    if(!paint_init(&paint)) goto cleanup;
+    if(!paint_init(&paint)) {
+        fprintf(stderr,"[UAPlay] UI renderer or fonts failed to initialize\n");
+        goto cleanup;
+    }
     posters_init();
     SDL_GameController *pad=NULL;
     for(int i=0;i<SDL_NumJoysticks();i++)
@@ -2047,13 +2107,7 @@ int main(void) {
                    selected_episode<episodes_in_season(season_ids[selected_season])-1)selected_episode++;
                 if(key==SDL_CONTROLLER_BUTTON_A){
                     Episode *episode=selected_episode_item();
-                    if(episode && (
-#ifdef __PS5__
-                       1
-#else
-                       render!=NULL
-#endif
-                       )){
+                    if(episode && render){
                         Source episode_source={0};
                         snprintf(episode_source.url,sizeof(episode_source.url),"%s",episode->url);
                         char url[2048]={0};message[0]=0;
@@ -2067,22 +2121,16 @@ int main(void) {
                                        &saved_season,&saved_episode,&saved_seconds) &&
                                        saved_season==episode->season &&
                                        saved_episode==episode->number)?saved_seconds:0;
-#ifdef __PS5__
-                            if(!handoff_stream_ps5(url,playing_movie.title,
-                                                   message,sizeof(message)))continue;
-#endif
                             library_mark_watched(&playing_movie);
                             library_set_episode_progress(&playing_movie,
                                 episode->season,episode->number,resume_at);
                             snprintf(playing_url,sizeof(playing_url),"%s",url);
- #ifndef __PS5__
                             apply_hls_quality(player);
                             configure_stream(player,url);
                             command(player,"loadfile",url);
                             video_started_at=SDL_GetTicks();video_loaded=0;
                             controls_until=SDL_GetTicks()+3000;
                             player_return_page=EPISODES;page=PLAYER;
- #endif
                         }
                     } else if(!render) snprintf(message,sizeof(message),"Плеєр mpv не ініціалізовано");
                 }
@@ -2376,30 +2424,20 @@ int main(void) {
                     }
                     char url[2048]={0};
                     message[0]=0;
-                    if(!render
-#ifdef __PS5__
-                       && 0
-#endif
-                       ){
-                        snprintf(message,sizeof(message),"Плеєр mpv не ініціалізовано");
+                    if(!render){
+                        snprintf(message,sizeof(message),"Відеоплеєр не ініціалізовано");
                     }else if(uakino_resolve(&sources[source],url,sizeof(url),message,sizeof(message))){
-#ifdef __PS5__
-                        if(!handoff_stream_ps5(url,movies[chosen].title,
-                                               message,sizeof(message)))continue;
-#endif
                         snprintf(pending_subtitle,sizeof(pending_subtitle),"%s",uakino_resolved_subtitle());
                         playing_movie=movies[chosen];
                         resume_at=library_progress(&playing_movie);
                         library_mark_watched(&playing_movie);
                         snprintf(playing_url,sizeof(playing_url),"%s",url);
-#ifndef __PS5__
                         apply_hls_quality(player);
                         configure_stream(player,url);
                         command(player,"loadfile",url);
                         video_started_at=SDL_GetTicks();video_loaded=0;
                         controls_until=SDL_GetTicks()+3000;
                         player_return_page=SOURCES;page=PLAYER;
-#endif
                     }
                 }
             }
@@ -2607,6 +2645,9 @@ int main(void) {
     glDeleteTextures(1,&paint.tex);
     glDeleteBuffers(1,&paint.vbo);
     glDeleteProgram(paint.program);
+#ifdef __PS5__
+    glDeleteVertexArrays(1,&paint.vao);
+#endif
 cleanup:
     SDL_GL_DeleteContext(gl);
     SDL_DestroyWindow(window);SDL_Quit();

@@ -1,7 +1,12 @@
 #ifndef LAMPA_POSTERS_H
 #define LAMPA_POSTERS_H
 
+#ifdef __PS5__
+#define GL_GLEXT_PROTOTYPES 1
+#include <GL/glcorearb.h>
+#else
 #include <GLES2/gl2.h>
+#endif
 #include "catalog.h"
 
 /* Start the background image downloader after SDL and curl initialization. */

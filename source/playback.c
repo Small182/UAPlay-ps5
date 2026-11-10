@@ -2,6 +2,18 @@
 #include <stdio.h>
 #include <string.h>
 
+#ifdef __PS5__
+int playback_tracks(mpv_handle *player,int subtitles,MediaTrack *out,int maximum) {
+    return ps5_kitchen_tracks(player,subtitles,out,maximum);
+}
+int playback_select_track(mpv_handle *player,int subtitles,int id) {
+    return ps5_kitchen_select_track(player,subtitles,id);
+}
+void playback_set_value(mpv_handle *player,const char *property,double value) {
+    if (!strcmp(property,"volume")) ps5_kitchen_set_volume(player,value);
+    /* Other libmpv-specific filters/speed cannot be assumed supported by FFmpeg. */
+}
+#else
 static const mpv_node *map_field(const mpv_node *item, const char *key) {
     if (!item || item->format != MPV_FORMAT_NODE_MAP) return NULL;
     mpv_node_list *map=item->u.list;
@@ -67,3 +79,4 @@ void playback_set_value(mpv_handle *player, const char *property, double value) 
     const char *args[]={"set",property,number,NULL};
     mpv_command_async(player,0,args);
 }
+#endif

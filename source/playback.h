@@ -1,10 +1,14 @@
 #ifndef UAFLIX_PLAYBACK_H
 #define UAFLIX_PLAYBACK_H
 
+#ifdef __PS5__
+#include "../ps5/kitchensink_mpv.h"
+#else
 #include <mpv/client.h>
+#endif
 
 #define TRACKS_MAX 48
-typedef struct {
+typedef struct MediaTrack {
     int id;
     int selected;
     char label[192];
