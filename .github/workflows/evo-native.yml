@@ -1,0 +1,30 @@
+name: UAPlay native EVO host (experimental)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [evo-host]
+    paths:
+      - 'ps5/webui/**'
+      - 'ps5/build-evo-title.sh'
+      - '.github/workflows/evo-native.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    runs-on: macos-15
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native build prerequisites
+        run: brew install llvm lld coreutils nasm
+      - name: Build EVO-based UAPlay test title
+        run: bash ps5/build-evo-title.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UAPlay-PS5-EVO-native-UNTESTED
+          path: UAPlay-PS5-EVO-test.tar.gz
+          if-no-files-found: error
+          retention-days: 14
