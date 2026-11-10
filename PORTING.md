@@ -28,6 +28,23 @@ code; it does **not** produce a PS5 executable or installable title.
 6. Test actual DualSense buttons, TLS, video, audio, HLS and storage on PS5
    firmware 13.60. No hardware validation has been performed.
 
+## EVO Player integration experiment
+
+EVO Player has a loopback endpoint `/evo/play?url=...&title=...` which is
+used by its embedded WebUI and the Nuvio PS5 port. This endpoint runs only
+inside an active EVO native host; a separately installed EVO title cannot be
+started by an ordinary HTTP request from UAPlay.
+
+`ps5/evo_bridge.c` now validates and encodes the selected stream URL, sends a
+bounded loopback handoff, and reports unavailability. In PS5-guarded source
+selection and episode selection, UAPlay calls this bridge after resolving the
+provider stream. The bridge is unit-tested on Linux.
+
+**Still required:** compile an EVO-derived playback host into the same PS5
+title/process and integrate its event loop, browser/modal transitions, return
+navigation, renderer handover and audio. Do not ship or describe this adapter
+as a working player until that host is integrated and tested on hardware.
+
 The UI layout, catalog, film/series details, favorites and navigation are not
 intentionally redesigned for this port. Native compilation and successful CI
 are separate milestones; neither implies playback works on hardware.
