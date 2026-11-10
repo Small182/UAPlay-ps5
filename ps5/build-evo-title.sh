@@ -31,7 +31,24 @@ data['conceptId']='99282'
 data['contentId']='UP9000-PPSA99282_00-UAPLAYPS50000000'
 data['localizedParameters']['en-US']['titleName']='UAPlay PS5 (EVO test)'
 meta.write_text(json.dumps(data,indent=2)+'\n')
+
+# The original ps5-homebrew-ui repository was removed. The EVO maintainer's
+# fork still serves the exact pinned commit and byte-identical tarball.
+# Preserve the recorded SHA-256: the upstream build verifies it on download.
+lock=root/'deps.lock'
+old='https://codeload.github.com/blackbearreloaded/ps5-homebrew-ui/tar.gz/4bd942579dd981b3df9c740438489ca6a614ddc0'
+new='https://codeload.github.com/sainsaji/ps5-homebrew-ui/tar.gz/4bd942579dd981b3df9c740438489ca6a614ddc0'
+pins=json.loads(lock.read_text())
+dependency=next(a for a in pins['artifacts'] if a['id']=='ps5-homebrew-ui-source')
+assert dependency['url']==old, 'Unexpected ps5-homebrew-ui archive source'
+assert dependency['sha256']=='e51a7e20d9bf5e051d8106c87268bcdcb22717919b69ece4510e063a754ecf0d'
+dependency['url']=new
+lock.write_text(json.dumps(pins,indent=2)+'\n')
 PY
+
+if command -v sips >/dev/null; then
+  sips -s format png "$project_root/icon.jpg" --out "$upstream/sce_sys/icon0.png" >/dev/null
+fi
 
 # Nuvio's verified adapter compiles EVO's FFmpeg, native decoder, audio,
 # sandbox bridge, and title folder. The first build can take a long time.
@@ -47,6 +64,17 @@ fi
 # GPL notices and package the separate boot helpers for diagnostic deployment.
 mkdir -p "$title_dir/webui"
 cp -a "$project_root/ps5/webui/." "$title_dir/webui/"
+if command -v sips >/dev/null && [[ -d "$title_dir/sce_sys" ]]; then
+  sips -s format png "$project_root/icon.jpg" --out "$title_dir/sce_sys/icon0.png" >/dev/null
+fi
+if [[ "${TMDB_API_KEY:-}" =~ ^[0-9a-fA-F]{32}$ ]]; then
+  # TMDb's application key is included in the installed client, as on Switch.
+  # Do not print the key in Actions logs or commit the generated file.
+  umask 077
+  printf 'window.UAPLAY_TMDB_API_KEY="%s";\n' "$TMDB_API_KEY" > "$title_dir/webui/config.js"
+else
+  echo 'TMDB_API_KEY missing; the offline catalog will remain available.'
+fi
 
 cp -a "$title_dir" "$output/PPSA99282"
 for helper in nuvio.elf promote.elf close.elf; do

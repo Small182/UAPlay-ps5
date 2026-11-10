@@ -1,0 +1,4 @@
+.top #search-toggle{margin-left:auto;font-size:32px;color:#e9f1f4;border-radius:9px;padding:3px 14px}
+.search{position:absolute;top:120px;left:90px;right:90px;background:#1a2a34;padding:28px;border-radius:16px;z-index:5;box-shadow:0 20px 90px #000b}
+.search input{width:65%;font:22px Inter,Arial,sans-serif;color:white;background:#31424e;border:1px solid #8296a3;padding:15px;border-radius:9px;margin-right:14px}
+.search button{margin-right:8px}
