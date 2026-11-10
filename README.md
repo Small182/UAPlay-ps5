@@ -20,17 +20,18 @@ The goal is to retain the Switch app's catalogue, details, favorites, streaming-
 ## Native port groundwork on `native-sdl`
 
 - Imported C sources, bundled assets, metadata snapshots, fonts and tests.
-- Started `__PS5__` guards and PS5 storage paths (`/data/uaplay`).
+- Started `__PS5__` guards and PS5 storage paths (`/download0/uaplay`).
 - Initial PlayStation button hint mapping.
 - OpenGL Core-profile shader port of the actual UAPlay renderer.
 - SDL_kitchensink/FFmpeg playback adapter using native OpenGL + SDL audio;
   no browser, EVO or Nuvio frontend.
-- A pinned-source GitHub Actions native cross-build experiment, and portable C
-  regression tests.
+- A pinned-source GitHub Actions native cross-build, with portable C
+  regression tests. The complete executable successfully compiled in
+  [run 42918448050](https://github.com/Small182/UAPlay-ps5/actions/runs/42918448050).
 
 ## What still needs verification
 
-- Successful native cross-link with the complete PS5 SDL/OpenGL/FFmpeg stack.
+- Actual loading of the successfully cross-linked native executable on PS5.
 - Actual video/audio and HLS playback on firmware 13.60.
 - Full subtitles, codec controls and provider-specific HTTP header handling.
 - PS5 on-screen keyboard (search entry is not yet functional).
@@ -41,9 +42,13 @@ See [PORTING.md](PORTING.md) for engineering tasks and [STATUS.md](STATUS.md) fo
 ## CI
 
 [GitHub Actions](https://github.com/Small182/UAPlay-ps5/actions) has portable
-tests and an experimental native `native-sdl.yml` build. Only a successful
-native cross-build will upload `UAPlay-PS5-native-UNTESTED`, and that still
-requires console validation. See [PORTING.md](PORTING.md).
+tests and an experimental native `native-sdl.yml` build. The successful
+`native-sdl` run uploads **UAPlay-PS5-native-UNTESTED**, a ZIP with
+`UAPlay-PS5-native-candidate.tar.gz` inside. Extract both archives to obtain
+the `PPSA99282` native title folder (`eboot.bin`, `sce_sys/`, `sce_module/`,
+`romfs/` and bundled assets). This is **not a Sony retail PKG**, and it must
+be launched using a compatible homebrew title/folder loader on a PS5 with
+the necessary homebrew access. See [PORTING.md](PORTING.md).
 
 ## Upstream
 
