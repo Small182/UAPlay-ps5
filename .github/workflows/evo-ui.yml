@@ -5,6 +5,7 @@ on:
     branches: [evo-host]
     paths:
       - 'ps5/webui/**'
+      - 'ps5/tests/**'
       - '.github/workflows/evo-ui.yml'
   workflow_dispatch:
 
@@ -16,8 +17,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Validate JavaScript syntax
-        run: node --check ps5/webui/app.js
+      - name: Validate JavaScript syntax and navigation
+        run: |
+          node --check ps5/webui/app.js
+          node --check ps5/webui/providers.js
+          node ps5/tests/webui_smoke.js
+          node ps5/tests/providers_smoke.js
       - name: Check UI assets
         run: |
           test -s ps5/webui/index.html

@@ -77,12 +77,28 @@ else
 fi
 
 cp -a "$title_dir" "$output/PPSA99282"
-for helper in nuvio.elf promote.elf close.elf; do
+mkdir -p "$output/helpers"
+for helper in nuvio.elf promote.elf close.elf control-{1,2,3,4,5}.elf; do
   if [[ -f "$upstream/build/$helper" ]]; then
-    cp "$upstream/build/$helper" "$output/$helper"
+    cp "$upstream/build/$helper" "$output/helpers/$helper"
   fi
 done
+python3 - "$upstream/build/build.json" "$output/PPSA99282" "$output/build.json" <<'PY'
+from pathlib import Path
+import hashlib
+import json
+import sys
+receipt_path,title_path,output_path=map(Path,sys.argv[1:])
+receipt=json.loads(receipt_path.read_text())
+receipt['title_id']='PPSA99282'
+receipt['firmware_validation']='[UNKNOWN - needs console test]'
+receipt['frontend']='UAPlay PS5 experimental WebUI'
+receipt['files']={str(path.relative_to(title_path)):
+                  hashlib.sha256(path.read_bytes()).hexdigest()
+                  for path in title_path.rglob('*') if path.is_file()}
+output_path.write_text(json.dumps(receipt,indent=2)+'\n')
+PY
 cp "$upstream/LICENSE" "$output/NUVIO-UPSTREAM-LICENSE" 2>/dev/null || true
-printf '%s\n' 'EVO-derived test host. Not validated on PS5 hardware.' > "$output/README-TEST.txt"
+cp "$project_root/ps5/DEPLOY.md" "$output/README-TEST.md"
 tar -C "$output" -czf "$project_root/UAPlay-PS5-EVO-test.tar.gz" .
 echo 'Experimental EVO-native PS5 title packaged.'
