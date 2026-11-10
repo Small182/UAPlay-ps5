@@ -1,0 +1,43 @@
+name: PS5 native bootstrap (experimental)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'ps5/**'
+      - '.github/workflows/ps5-bootstrap.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PS5 cross-compilation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clang-18 lld-18 make pkg-config python3 tar unzip wget curl git
+      - name: Retrieve pinned native PS5 boilerplate
+        run: |
+          git clone https://github.com/drakmor/ps5-native-app-boilerplate.git /tmp/uaplay-native-template
+          git -C /tmp/uaplay-native-template checkout --detach 470695e0c557f99ff2df0e36e4df713c5e636526
+          cp ps5/bootstrap_main.cpp /tmp/uaplay-native-template/src/main.cpp
+      - name: Configure UAPlay bootstrap title
+        working-directory: /tmp/uaplay-native-template
+        run: make init TITLE_ID=PPSA99282 APP_NAME='UAPlay PS5 Bootstrap' APP_CATEGORY=media
+      - name: Build native PS5 title folder
+        working-directory: /tmp/uaplay-native-template
+        run: make -j2 app
+      - name: Package boot test folder
+        run: |
+          test -d /tmp/uaplay-native-template/dist/PPSA99282
+          tar -C /tmp/uaplay-native-template/dist -czf UAPlay-PS5-bootstrap.tar.gz PPSA99282
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UAPlay-PS5-bootstrap-NOT-FULL-APP
+          path: UAPlay-PS5-bootstrap.tar.gz
+          if-no-files-found: error
