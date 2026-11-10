@@ -18,3 +18,6 @@ done
 
 echo 'Portable UAPlay checks passed.'
 
+cc -O2 -Wall -Wextra -Ips5 ps5/evo_bridge.c tests/evo_bridge_smoke.c $libs -o "${out}/evo_bridge_smoke"
+"${out}/evo_bridge_smoke"
+
