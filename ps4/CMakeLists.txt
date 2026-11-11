@@ -22,32 +22,32 @@ target_compile_options(uaplay_ps4 PRIVATE -O2 -Wall -Wextra)
 target_compile_definitions(uaplay_ps4 PRIVATE __PS4__ SDL_MAIN_HANDLED)
 target_include_directories(uaplay_ps4 PRIVATE ../source)
 
-# The PacBrew PS4 portlibs include an actual libmpv + FFmpeg stack, SDL2,
-# SDL2_image, SDL2_ttf, curl and all their static transitive dependencies.
+# The PacBrew PS4 snapshot has libmpv + FFmpeg, SDL2, SDL2_image, SDL2_ttf,
+# and libcurl; this historic snapshot does not provide a libcurl.pc file.
 # --static is necessary: the PS4 title does not ship host .so libraries.
 execute_process(
     COMMAND ${PKG_CONFIG_EXECUTABLE} --static --cflags
-            mpv SDL2_ttf SDL2_image libcurl
+            mpv SDL2_ttf SDL2_image
     OUTPUT_VARIABLE PACKAGE_CFLAGS
     RESULT_VARIABLE CFLAGS_OK
     OUTPUT_STRIP_TRAILING_WHITESPACE
 )
 execute_process(
     COMMAND ${PKG_CONFIG_EXECUTABLE} --static --libs
-            mpv SDL2_ttf SDL2_image libcurl
+            mpv SDL2_ttf SDL2_image
     OUTPUT_VARIABLE PACKAGE_LIBS
     RESULT_VARIABLE LIBS_OK
     OUTPUT_STRIP_TRAILING_WHITESPACE
 )
 if(NOT CFLAGS_OK EQUAL 0 OR NOT LIBS_OK EQUAL 0)
-    message(FATAL_ERROR "PS4 PacBrew libraries missing: mpv SDL2_ttf SDL2_image libcurl")
+    message(FATAL_ERROR "PS4 PacBrew libraries missing: mpv SDL2_ttf SDL2_image")
 endif()
 separate_arguments(PACKAGE_CFLAGS NATIVE_COMMAND "${PACKAGE_CFLAGS}")
 separate_arguments(PACKAGE_LIBS NATIVE_COMMAND "${PACKAGE_LIBS}")
 list(REMOVE_ITEM PACKAGE_LIBS "-pthread" "-lpthread")
 target_compile_options(uaplay_ps4 PRIVATE ${PACKAGE_CFLAGS})
 target_link_libraries(uaplay_ps4 PRIVATE
-    ${PACKAGE_LIBS}
+    ${PACKAGE_LIBS} curl
     ScePigletv2VSH ScePrecompiledShaders SceSysmodule SceSystemService
     SceUserService SceVideoOut SceAudioOut ScePad SceNet SceNetCtl SceSsl
     SceHttp SceRtc m

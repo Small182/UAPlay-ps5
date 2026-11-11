@@ -24,27 +24,15 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ca-certificates curl cmake build-essential pkg-config
-      - name: Install PacBrew toolchain manager
+      - name: Install archived OpenOrbis SDK and media ports from GitHub
         run: |
           curl --fail --location --retry 4 --silent --show-error \
-            https://github.com/PacBrew/pacbrew-pacman/releases/download/pacbrew-release-1.0/pacbrew-pacman-1.0.deb \
-            -o /tmp/pacbrew-pacman.deb
-          sudo apt-get install -y /tmp/pacbrew-pacman.deb
-      - name: Provide legacy OpenSSL runtime for PacBrew only
-        run: |
-          curl --fail --location --retry 4 --silent --show-error \
-            https://archive.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2.24_amd64.deb \
-            -o /tmp/pacbrew-libssl11.deb
-          sudo dpkg-deb --extract /tmp/pacbrew-libssl11.deb /opt/pacbrew/openssl11
-          echo /opt/pacbrew/openssl11/usr/lib/x86_64-linux-gnu | sudo tee /etc/ld.so.conf.d/pacbrew-openssl11.conf
-          sudo ldconfig
-          find /opt/pacbrew/openssl11 -name 'libcrypto.so.1.1' -print
-          ldd /opt/pacbrew/pacman/bin/pacman || true
-      - name: Install OpenOrbis and PS4 ports (SDL, mpv, FFmpeg, curl)
-        run: |
-          sudo pacbrew-pacman --noconfirm -Sy
-          sudo pacbrew-pacman --noconfirm -S ps4-openorbis ps4-openorbis-portlibs
-          test -x /opt/pacbrew/ps4/openorbis/usr/bin/openorbis-cmake
+            https://github.com/PacBrew/pacbrew-packages/releases/download/1.0.0/pacbrew-ps4-openorbis-1.0.0.tar.xz \
+            -o /tmp/pacbrew-ps4-openorbis.tar.xz
+          # Official release archive contains only opt/pacbrew/ps4/**.
+          sudo tar -xJf /tmp/pacbrew-ps4-openorbis.tar.xz -C /
+          test -f /opt/pacbrew/ps4/openorbis/ps4vars.sh
+          test -f /opt/pacbrew/ps4/openorbis/usr/lib/libmpv.a
       - name: Inject TMDb key for catalogue requests
         env:
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
