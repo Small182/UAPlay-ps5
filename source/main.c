@@ -4,8 +4,10 @@
 #include <time.h>
 #include <math.h>
 #include <sys/stat.h>
-#ifdef __PS5__
+#if defined(__PS5__) || defined(__PS4__)
 #include <unistd.h>
+#endif
+#ifdef __PS5__
 #define GL_GLEXT_PROTOTYPES 1
 #include <GL/glcorearb.h>
 #include "../ps5/kitchensink_mpv.h"
@@ -622,7 +624,7 @@ static int paint_init(Paint *p) {
     p->font_tiny=TTF_OpenFont(UAPLAY_ASSET("InterVariable.ttf"),15);
     for(int i=0;i<7;i++){
         char path[96];snprintf(path,sizeof(path),"%sNotoSans%s.ttf",
-#ifdef __PS5__
+#if defined(__PS5__) || defined(__PS4__)
                                 "romfs/",
 #else
                                 "romfs:/",
@@ -1018,7 +1020,7 @@ static void footer(Paint *p,const char *message) {
     text_font(p,footer_total && !(footer_page==CATALOG && expanded_catalog)?position:"UAPLAY",43,682,140,
               p->font_small,ar,ag,ab);
     const char *keys[6],*labels[6];int count=0;
-#ifdef __PS5__
+#if defined(__PS5__) || defined(__PS4__)
 #define PAD_HINT(k) (!strcmp(k,"A")?"✕":!strcmp(k,"B")?"◯": \
                      !strcmp(k,"X")?"□":!strcmp(k,"Y")?"△": \
                      !strcmp(k,"L")?"L1":!strcmp(k,"R")?"R1": \
@@ -1487,7 +1489,7 @@ static void draw_player_controls(Paint *p,mpv_handle *player) {
     if(active_episode_variant>=0 &&
        catalog_next_episode(episodes,episode_count,active_episode_variant)>=0)
         text_tiny(p,
-#ifdef __PS5__
+#if defined(__PS5__) || defined(__PS4__)
                   "L1 — Наступна серія",
 #else
                   "L — Наступна серія",
@@ -1537,7 +1539,7 @@ static void draw_next_episode_prompt(Paint *p,const Episode *next,int seconds){
     snprintf(timer,sizeof(timer),"Автозапуск через %d с",seconds);
     text_small(p,timer,286,376,681);
     text_small(p,
-#ifdef __PS5__
+#if defined(__PS5__) || defined(__PS4__)
                "✕ — дивитися зараз     ◯ — скасувати",
 #else
                "A — дивитися зараз     B — скасувати",
@@ -1545,8 +1547,8 @@ static void draw_next_episode_prompt(Paint *p,const Episode *next,int seconds){
                286,448,690);
 }
 static int native_button(int button) {
-#ifdef __PS5__
-    /* SDL uses south/east/west/north positions; DualSense matches these. */
+#if defined(__PS5__) || defined(__PS4__)
+    /* SDL face buttons use PlayStation positions: cross/circle/square/triangle. */
     return button;
 #else
     /* SDL uses Xbox-style face button names; Switch prints the opposite labels. */
@@ -1582,6 +1584,8 @@ static void configure_stream(mpv_handle *player,const char *url) {
     if(!player)return;
 #ifdef __PS5__
     mpv_set_property_string(player,"user-agent","Mozilla/5.0 (PlayStation 5; UAPlay/1.0)");
+#elif defined(__PS4__)
+    mpv_set_property_string(player,"user-agent","Mozilla/5.0 (PlayStation 4; UAPlay/1.0)");
 #else
     mpv_set_property_string(player,"user-agent","Mozilla/5.0 (Nintendo Switch; UAPlay/1.0)");
 #endif
@@ -1598,6 +1602,10 @@ static int keyboard(char *value,size_t size) {
     /* TODO: connect native PS5 IME; do not call the unavailable libnx SWKBD. */
     (void)value;(void)size;
     return 0;
+#elif defined(__PS4__)
+    /* TODO: integrate SceImeDialog; do not invoke the Switch software keyboard. */
+    (void)value;(void)size;
+    return 0;
 #else
     SwkbdConfig cfg;
     if(R_FAILED(swkbdCreate(&cfg,0))) return 0;
@@ -1608,8 +1616,8 @@ static int keyboard(char *value,size_t size) {
 #endif
 }
 int main(void) {
-#ifdef __PS5__
-    fprintf(stderr,"[UAPlay] native SDL UI booting (no browser host)\n");
+#if defined(__PS5__) || defined(__PS4__)
+    fprintf(stderr,"[UAPlay] native console SDL UI booting (no browser host)\n");
     SDL_SetMainReady();
     chdir("/app0");
     mkdir(UAPLAY_DATA_ROOT,0777);
@@ -1620,7 +1628,7 @@ int main(void) {
 #endif
     library_init();
     theme_load();
-#ifndef __PS5__
+#ifdef __SWITCH__
     Result network_result = socketInitializeDefault();
     if (R_SUCCEEDED(network_result)) curl_global_init(CURL_GLOBAL_DEFAULT);
 #endif
@@ -1636,7 +1644,11 @@ int main(void) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION,3);
 #else
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK,SDL_GL_CONTEXT_PROFILE_ES);
+#ifdef __PS4__
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION,2);
+#else
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION,3);
+#endif
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION,0);
 #endif
     SDL_Window *window=SDL_CreateWindow("UAPlay",0,0,1280,720,SDL_WINDOW_OPENGL|SDL_WINDOW_SHOWN);
@@ -2539,7 +2551,7 @@ int main(void) {
         int watching_video=(page==PLAYER || page==TRACK_PICKER ||
                             (page==VIDEO_SETTINGS && !video_settings_from_menu));
         if(watching_video!=media_playback_mode){
-#ifndef __PS5__
+#ifdef __SWITCH__
             appletSetMediaPlaybackState(watching_video!=0);
 #endif
             media_playback_mode=watching_video;
@@ -2621,7 +2633,7 @@ int main(void) {
         Uint32 frame_budget=page==PLAYER?16u:33u;
         if(frame_elapsed<frame_budget)SDL_Delay(frame_budget-frame_elapsed);
     }
-#ifndef __PS5__
+#ifdef __SWITCH__
     if(media_playback_mode)appletSetMediaPlaybackState(false);
 #endif
     catalog_loader_shutdown();
@@ -2651,7 +2663,7 @@ int main(void) {
 cleanup:
     SDL_GL_DeleteContext(gl);
     SDL_DestroyWindow(window);SDL_Quit();
-#ifdef __PS5__
+#if defined(__PS5__) || defined(__PS4__)
     curl_global_cleanup();
 #else
     romfsExit();

@@ -9,12 +9,12 @@
 #include <time.h>
 #include "platform_paths.h"
 
-#if defined(__SWITCH__) || defined(__PS5__)
+#if defined(__SWITCH__) || defined(__PS5__) || defined(__PS4__)
 #include <SDL.h>
 #endif
 
 #define TMDB_KEY_PATH UAPLAY_CATALOG_DIR "/tmdb.key"
-#ifdef __PS5__
+#if defined(__PS5__) || defined(__PS4__)
 #define TMDB_LEGACY_KEY_PATH UAPLAY_CATALOG_DIR "/tmdb.key"
 #else
 #define TMDB_LEGACY_KEY_PATH "sdmc:/switch/lampa-nx/tmdb.key"
@@ -41,7 +41,7 @@ static void json_field(const char *object,const char *end,const char *key,
 typedef struct { int id,series,allowed; } CountryCacheEntry;
 static CountryCacheEntry country_cache[COUNTRY_CACHE_LIMIT];
 static int country_cache_count,country_cache_evict;
-#if defined(__SWITCH__) || defined(__PS5__)
+#if defined(__SWITCH__) || defined(__PS5__) || defined(__PS4__)
 static SDL_mutex *country_cache_mutex;
 #define COUNTRY_LOCK() do { if(country_cache_mutex) SDL_LockMutex(country_cache_mutex); } while(0)
 #define COUNTRY_UNLOCK() do { if(country_cache_mutex) SDL_UnlockMutex(country_cache_mutex); } while(0)
@@ -54,7 +54,7 @@ static SDL_mutex *country_cache_mutex;
    tears down HTTPS/TLS sockets. Eden's socket emulation can eventually fail
    new connections even though existing poster requests still work. Keep
    one reusable handle per calling thread, never shared concurrently. */
-#if defined(__SWITCH__) || defined(__PS5__)
+#if defined(__SWITCH__) || defined(__PS5__) || defined(__PS4__)
 static SDL_threadID catalog_ui_thread;
 static CURL *catalog_connections[2];
 static void country_cache_load(void){
@@ -129,7 +129,7 @@ static void request_options(CURL *curl, const char *url, Response *r,
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "Lampa-nx/0.2 (Nintendo Switch)");
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, on_data);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, r);
-#if defined(__SWITCH__) || defined(__PS5__)
+#if defined(__SWITCH__) || defined(__PS5__) || defined(__PS4__)
     /* Console/Eden socket layers can advertise IPv6 without routing it. */
     curl_easy_setopt(curl, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
     curl_easy_setopt(curl, CURLOPT_MAXCONNECTS, 4L);
@@ -147,7 +147,7 @@ static int transient_network_error(CURLcode result) {
 }
 
 static char *request(const char *url, char *error, int error_size) {
-#if defined(__SWITCH__) || defined(__PS5__)
+#if defined(__SWITCH__) || defined(__PS5__) || defined(__PS4__)
     CURL **slot = catalog_connection_slot();
     if (!*slot) *slot = curl_easy_init();
     CURL *curl = *slot;
@@ -165,7 +165,7 @@ static char *request(const char *url, char *error, int error_size) {
         if (r.data) r.data[0] = 0;
         curl_easy_cleanup(curl);
         curl = curl_easy_init();
-#if defined(__SWITCH__) || defined(__PS5__)
+#if defined(__SWITCH__) || defined(__PS5__) || defined(__PS4__)
         *slot = curl;
 #endif
         if (curl) {
@@ -175,7 +175,7 @@ static char *request(const char *url, char *error, int error_size) {
     }
     long status = 0;
     if (curl) curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
-#if defined(__SWITCH__) || defined(__PS5__)
+#if defined(__SWITCH__) || defined(__PS5__) || defined(__PS4__)
     if (result != CURLE_OK && curl) {
         curl_easy_cleanup(curl);
         *slot = NULL;
@@ -257,7 +257,7 @@ static char *read_offline_catalog(const char *category) {
                        !strcmp(category, "top") ? "top" : "movies";
     char path[80];
     snprintf(path, sizeof(path), "%s%s.json",
-#ifdef __PS5__
+#if defined(__PS5__) || defined(__PS4__)
              "romfs/",
 #else
              "romfs:/",
@@ -443,7 +443,7 @@ int catalog_load_page_sorted(const char *category, const char *query, int page,
     char key[256];
     tmdb_key(key,sizeof(key));
     if (!key[0]) {
-#ifdef __PS5__
+#if defined(__PS5__) || defined(__PS4__)
         snprintf(error,error_size,"TMDb: не задано ключ (GitHub Actions TMDB_API_KEY)");
 #else
         snprintf(error,error_size,"TMDB: додайте /switch/uaplay/tmdb.key на SD-карту");

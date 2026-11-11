@@ -1,0 +1,52 @@
+name: UAPlay PS4 compatibility PKG (experimental)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ps4-compat]
+    paths:
+      - 'source/**'
+      - 'ps4/**'
+      - 'scripts/build-ps4.sh'
+      - 'scripts/prepare-tmdb-key.sh'
+      - '.github/workflows/ps4-compat.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  ps4:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ca-certificates curl cmake build-essential pkg-config
+      - name: Install PacBrew toolchain manager
+        run: |
+          curl --fail --location --retry 4 --silent --show-error \
+            https://github.com/PacBrew/pacbrew-pacman/releases/download/pacbrew-release-1.0/pacbrew-pacman-1.0.deb \
+            -o /tmp/pacbrew-pacman.deb
+          sudo apt-get install -y /tmp/pacbrew-pacman.deb
+      - name: Install OpenOrbis and PS4 ports (SDL, mpv, FFmpeg, curl)
+        run: |
+          sudo pacbrew-pacman --noconfirm -Sy
+          sudo pacbrew-pacman --noconfirm -S ps4-openorbis ps4-openorbis-portlibs
+          test -x /opt/pacbrew/ps4/openorbis/usr/bin/openorbis-cmake
+      - name: Inject TMDb key for catalogue requests
+        env:
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+        run: bash scripts/prepare-tmdb-key.sh
+      - name: Cross-compile actual UAPlay UI and libmpv player for PS4
+        run: |
+          source /opt/pacbrew/ps4/openorbis/ps4vars.sh
+          bash scripts/build-ps4.sh
+          test -s build/ps4/UAPlay-PS4.pkg
+      - name: Upload installable PS4 PKG (untested on hardware)
+        uses: actions/upload-artifact@v4
+        with:
+          name: UAPlay-PS4-PKG-UNTESTED
+          path: build/ps4/UAPlay-PS4.pkg
+          if-no-files-found: error
