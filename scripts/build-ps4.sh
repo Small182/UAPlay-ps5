@@ -16,7 +16,7 @@ mkdir -p "$build_dir"
 
 "${OPENORBIS}/usr/bin/openorbis-cmake" -S "${repo}/ps4" -B "$build_dir" \
     -DCMAKE_BUILD_TYPE=Release
-cmake --build "$build_dir" --target uaplay_ps4_pkg --parallel "$(nproc)"
+cmake --build "$build_dir" --target uaplay_ps4_pkg --verbose --parallel "$(nproc)"
 
 output="${PS4_PKG_OUTPUT:-${build_dir}/UAPlay-PS4.pkg}"
 candidate=$(find "$build_dir" -maxdepth 1 -type f -name '*.pkg' -print -quit)

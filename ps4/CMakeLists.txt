@@ -48,6 +48,7 @@ separate_arguments(PACKAGE_LIBS NATIVE_COMMAND "${PACKAGE_LIBS}")
 # compiler-driver wrapper is therefore invalid; pass its following option
 # straight through to ld.lld instead.
 list(REMOVE_ITEM PACKAGE_LIBS "-pthread" "-lpthread" "-Xlinker")
+message(STATUS "PS4 linker library arguments: ${PACKAGE_LIBS}")
 target_compile_options(uaplay_ps4 PRIVATE ${PACKAGE_CFLAGS})
 target_link_libraries(uaplay_ps4 PRIVATE
     ${PACKAGE_LIBS} curl
