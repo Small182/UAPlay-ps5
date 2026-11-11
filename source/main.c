@@ -6,7 +6,9 @@
 #include <sys/stat.h>
 #ifdef __PS4__
 #include <stdbool.h>
-#include <orbis/libkernel.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdint.h>
 #endif
 #if defined(__PS5__) || defined(__PS4__)
 #include <unistd.h>
@@ -587,15 +589,35 @@ SDL_Renderer *ps4_ui_renderer;
 /* The PacBrew SDL2 driver selects its embedded shaders using this flag. */
 extern bool PS4_PigletShaccAvailable(void);
 
+static bool ps4_trace_sdl;
+
+static void ps4_write_boot_log(const char *line,int flags){
+    int fd=open(UAPLAY_DATA_ROOT "/boot.log",O_WRONLY|O_CREAT|flags,0666);
+    if(fd<0)return;
+    size_t remaining=strlen(line);
+    while(remaining){
+        ssize_t count=write(fd,line,remaining);
+        if(count<0 && errno==EINTR)continue;
+        if(count<=0)break;
+        line+=count;
+        remaining-=(size_t)count;
+    }
+    fsync(fd);
+    close(fd);
+}
+
+/* PacBrew sends video-driver logs to the kernel debug output. Persist the
+   bootstrap messages without calling that service in PS4 compatibility mode. */
+int32_t __wrap_sceKernelDebugOutText(int32_t channel,const char *line,...){
+    (void)channel;
+    if(ps4_trace_sdl && line)ps4_write_boot_log(line,O_APPEND);
+    return 0;
+}
+
 static void ps4_boot_log(const char *stage,const char *detail){
     char line[512];
     snprintf(line,sizeof(line),"[UAPlay] %s%s%s\n",stage,detail?": ":"",detail?detail:"");
-    sceKernelDebugOutText(0,line);
-    FILE *log=fopen(UAPLAY_DATA_ROOT "/boot.log","a");
-    if(log){
-        fputs(line,log);
-        fclose(log);
-    }
+    ps4_write_boot_log(line,O_APPEND);
 }
 
 static Uint8 color_byte(float value){
@@ -1800,9 +1822,7 @@ int main(void) {
     SDL_SetMainReady();
     mkdir(UAPLAY_DATA_ROOT,0777);
 #ifdef __PS4__
-    FILE *boot_log=fopen(UAPLAY_DATA_ROOT "/boot.log","w");
-    if(boot_log)fclose(boot_log);
-    ps4_boot_log("Initializing SDL video",NULL);
+    ps4_write_boot_log("[UAPlay] Entered main\n",O_TRUNC);
 #else
     chdir("/app0");
     mkdir(UAPLAY_CATALOG_DIR,0777);
@@ -1821,6 +1841,8 @@ int main(void) {
 #endif
     SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS,"1");
 #ifdef __PS4__
+    ps4_boot_log("Initializing SDL video",NULL);
+    ps4_trace_sdl=true;
     if(SDL_Init(SDL_INIT_VIDEO)){
         ps4_boot_log("SDL_Init video failed",SDL_GetError());
         return 1;
@@ -1884,6 +1906,9 @@ int main(void) {
     }
     Paint paint={0};
     int exit_code=0;
+#ifdef __PS4__
+    ps4_boot_log("Initializing UI and fonts",NULL);
+#endif
     if(!paint_init(&paint)){
 #ifdef __PS4__
         ps4_boot_log("UI renderer or font setup failed",SDL_GetError());
@@ -1897,8 +1922,10 @@ int main(void) {
     library_init();
     theme_load();
     draw(&paint,CATALOG,NULL,0,0,NULL,0,0,home_headings[0],"Завантаження каталогу...");
+    ps4_boot_log("Presenting first UI frame",NULL);
     present_ui(window);
     ps4_boot_log("First UI frame submitted",NULL);
+    ps4_trace_sdl=false;
     if(SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER)<0)
         ps4_boot_log("Controller initialization failed",SDL_GetError());
     if(SDL_InitSubSystem(SDL_INIT_AUDIO)<0)

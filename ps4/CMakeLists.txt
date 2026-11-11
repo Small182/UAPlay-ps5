@@ -21,6 +21,7 @@ set(UAPLAY_SOURCES
 
 add_executable(uaplay_ps4 ${UAPLAY_SOURCES})
 target_compile_features(uaplay_ps4 PRIVATE c_std_11)
+target_link_options(uaplay_ps4 PRIVATE --wrap=sceKernelDebugOutText)
 target_compile_options(uaplay_ps4 PRIVATE -O2 -Wall -Wextra)
 target_compile_definitions(uaplay_ps4 PRIVATE __PS4__ SDL_MAIN_HANDLED)
 target_include_directories(uaplay_ps4 PRIVATE ../source)
