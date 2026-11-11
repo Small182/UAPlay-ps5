@@ -50,11 +50,12 @@ the `PPSA99282` native title folder (`eboot.bin`, `sce_sys/`, `sce_module/`,
 be launched using a compatible homebrew title/folder loader on a PS5 with
 the necessary homebrew access. See [PORTING.md](PORTING.md).
 
-The workflow also attempts to produce **UAPlay-PS5-FFPKG-UNTESTED** containing
+The workflow successfully produces **UAPlay-PS5-FFPKG-UNTESTED** containing
 `PPSA99282.ffpkg` (UFS2, for ShadowMountPlus). This PS5 image is **not a
 PS4-compatible `.pkg`**. Place the image directly in a ShadowMountPlus scan
 location such as `/data/homebrew/`; the image itself contains `sce_sys/` at
-its root. PS5 hardware validation is still required. If it fails to mount or
+its root. [Native packaging run 43070340195](https://github.com/Small182/UAPlay-ps5/actions/runs/43070340195)
+passed. PS5 hardware validation is still required. If it fails to mount or
 launch, inspect `/data/shadowmount/debug.log` before changing launch methods.
 
 ## Upstream
