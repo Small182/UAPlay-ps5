@@ -1,4 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
+# PacBrew invokes the linker binary directly. Modern CMake's dependency-file
+# wrapper (-Xlinker --dependency-file=...) is valid for clang, not ld.lld.
+set(CMAKE_LINK_DEPENDS_USE_LINKER FALSE)
 project(uaplay_ps4 LANGUAGES C)
 
 # Cross-compile with PacBrew's OpenOrbis toolchain, never with host libraries.
