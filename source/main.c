@@ -599,7 +599,7 @@ static void ps4_boot_log(const char *stage,const char *detail){
 }
 
 static Uint8 color_byte(float value){
-    return (Uint8)(SDL_clamp(value,0.f,1.f)*255.f+.5f);
+    return (Uint8)(fminf(fmaxf(value,0.f),1.f)*255.f+.5f);
 }
 
 static void ps4_ui_box(const Paint *p,SDL_Rect rect,float r,float g,float b,float a){
@@ -1560,9 +1560,6 @@ static void draw_player_controls(Paint *p,mpv_handle *player) {
         mpv_get_property(player,"duration",MPV_FORMAT_DOUBLE,&duration);
         mpv_get_property(player,"pause",MPV_FORMAT_FLAG,&paused);
     }
-    glViewport(0,0,1280,720);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
     box_alpha(p,32,27,141,49,.045f,.063f,.079f,.92f,14);
     text_center(p,"‹  Назад",32,37,141,p->font_small,.96f,.97f,.99f);
     if(active_episode_variant>=0 &&
@@ -1702,11 +1699,48 @@ static int keyboard(char *value,size_t size) {
     return R_SUCCEEDED(result) && value[0];
 #endif
 }
+#ifdef __PS4__
+enum { PS4_VIDEO_WIDTH=960, PS4_VIDEO_HEIGHT=540, PS4_VIDEO_STRIDE=PS4_VIDEO_WIDTH*4 };
+static SDL_Texture *ps4_video_texture;
+static void *ps4_video_pixels;
+
+static int render_ps4_video(mpv_render_context *render){
+    if(!ps4_video_texture){
+        ps4_video_texture=SDL_CreateTexture(ps4_ui_renderer,SDL_PIXELFORMAT_ABGR8888,
+                                           SDL_TEXTUREACCESS_STREAMING,
+                                           PS4_VIDEO_WIDTH,PS4_VIDEO_HEIGHT);
+        if(!ps4_video_texture)return MPV_ERROR_GENERIC;
+        SDL_SetTextureBlendMode(ps4_video_texture,SDL_BLENDMODE_NONE);
+        SDL_SetTextureScaleMode(ps4_video_texture,SDL_ScaleModeLinear);
+    }
+    if(!ps4_video_pixels &&
+       posix_memalign(&ps4_video_pixels,64,PS4_VIDEO_STRIDE*PS4_VIDEO_HEIGHT)!=0)
+        return MPV_ERROR_NOMEM;
+
+    int size[]={PS4_VIDEO_WIDTH,PS4_VIDEO_HEIGHT};
+    size_t stride=PS4_VIDEO_STRIDE;
+    int wait_for_time=0;
+    mpv_render_param frame[]={
+        {MPV_RENDER_PARAM_SW_SIZE,size},
+        {MPV_RENDER_PARAM_SW_FORMAT,"rgb0"},
+        {MPV_RENDER_PARAM_SW_STRIDE,&stride},
+        {MPV_RENDER_PARAM_SW_POINTER,ps4_video_pixels},
+        {MPV_RENDER_PARAM_BLOCK_FOR_TARGET_TIME,&wait_for_time},
+        {MPV_RENDER_PARAM_INVALID,NULL}
+    };
+    int result=mpv_render_context_render(render,frame);
+    if(result<0)return result;
+    if(SDL_UpdateTexture(ps4_video_texture,NULL,ps4_video_pixels,PS4_VIDEO_STRIDE)<0 ||
+       SDL_RenderCopy(ps4_ui_renderer,ps4_video_texture,NULL,NULL)<0){
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"PS4 video texture: %s",SDL_GetError());
+        return MPV_ERROR_GENERIC;
+    }
+    return 0;
+}
+#endif
+
 static int open_player(mpv_handle **handle,mpv_render_context **render){
     if(*render)return 1;
-#ifdef __PS4__
-    if(ps4_ui_renderer)return 0;
-#endif
     mpv_handle *player=mpv_create();
     if(!player)return 0;
     mpv_set_option_string(player,"vo","libmpv");
@@ -1726,11 +1760,20 @@ static int open_player(mpv_handle **handle,mpv_render_context **render){
     mpv_request_log_messages(player,"warn");
     int result=mpv_initialize(player);
     if(result>=0){
+#ifdef __PS4__
+        if(ps4_ui_renderer){
+            mpv_render_param init[]={{MPV_RENDER_PARAM_API_TYPE,MPV_RENDER_API_TYPE_SW},
+                                    {MPV_RENDER_PARAM_INVALID,NULL}};
+            result=mpv_render_context_create(render,player,init);
+        }else
+#endif
+        {
         mpv_opengl_init_params gl_init={.get_proc_address=proc};
         mpv_render_param init[]={{MPV_RENDER_PARAM_API_TYPE,MPV_RENDER_API_TYPE_OPENGL},
                                 {MPV_RENDER_PARAM_OPENGL_INIT_PARAMS,&gl_init},
                                 {MPV_RENDER_PARAM_INVALID,NULL}};
         result=mpv_render_context_create(render,player,init);
+        }
     }
     if(result<0){
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"mpv: %s",mpv_error_string(result));
@@ -2759,11 +2802,17 @@ int main(void) {
         }
         if(page==PLAYER && render){
             ui_theme_enabled=0;
+            int render_result;
+#ifdef __PS4__
+            if(ps4_ui_renderer)render_result=render_ps4_video(render);
+            else
+#endif
+            {
             mpv_opengl_fbo fbo={.fbo=0,.w=1280,.h=720};int flip=1;
             mpv_render_param frame[]={{MPV_RENDER_PARAM_OPENGL_FBO,&fbo},
                                       {MPV_RENDER_PARAM_FLIP_Y,&flip},
                                       {MPV_RENDER_PARAM_INVALID,NULL}};
-            int render_result=mpv_render_context_render(render,frame);
+            render_result=mpv_render_context_render(render,frame);
             /* libmpv explicitly does not preserve all OpenGL state (viewport,
                scissor, blend factors). Without restoring it, transparent
                text glyphs may render as solid white rectangles in Eden. */
@@ -2776,6 +2825,7 @@ int main(void) {
             glEnable(GL_BLEND);
             glBlendEquation(GL_FUNC_ADD);
             glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+            }
             if(!video_loaded){
                 box(&paint,0,0,1280,720,.035f,.044f,.059f);
                 box_alpha(&paint,35,33,168,53,.10f,.15f,.22f,.95f,14);
@@ -2867,6 +2917,8 @@ cleanup_paint:
     glDeleteVertexArrays(1,&paint.vao);
 #endif
 #ifdef __PS4__
+    if(ps4_video_texture)SDL_DestroyTexture(ps4_video_texture);
+    free(ps4_video_pixels);
     if(ps4_ui_renderer)SDL_DestroyRenderer(ps4_ui_renderer);
 #endif
     if(gl)SDL_GL_DeleteContext(gl);
