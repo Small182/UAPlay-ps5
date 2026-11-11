@@ -33,6 +33,15 @@ jobs:
           sudo tar -xJf /tmp/pacbrew-ps4-openorbis.tar.xz -C /
           test -f /opt/pacbrew/ps4/openorbis/ps4vars.sh
           test -f /opt/pacbrew/ps4/openorbis/usr/lib/libmpv.a
+      - name: Install OpenSSL 1.1 compatibility runtime for old PKG packager
+        run: |
+          curl --fail --location --retry 4 --silent --show-error \
+            https://archive.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2.24_amd64.deb \
+            -o /tmp/openorbis-libssl11.deb
+          sudo dpkg-deb --extract /tmp/openorbis-libssl11.deb /opt/pacbrew/openssl11
+          echo /opt/pacbrew/openssl11/usr/lib/x86_64-linux-gnu | sudo tee /etc/ld.so.conf.d/openorbis-openssl11.conf
+          sudo ldconfig
+          test -f /opt/pacbrew/openssl11/usr/lib/x86_64-linux-gnu/libssl.so.1.1
       - name: Inject TMDb key for catalogue requests
         env:
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
