@@ -54,7 +54,7 @@ list(REMOVE_ITEM PACKAGE_LIBS "-pthread" "-lpthread" "-Xlinker")
 message(STATUS "PS4 linker library arguments: ${PACKAGE_LIBS}")
 target_compile_options(uaplay_ps4 PRIVATE ${PACKAGE_CFLAGS})
 target_link_libraries(uaplay_ps4 PRIVATE
-    ${PACKAGE_LIBS} curl
+    ${PACKAGE_LIBS} curl mbedtls mbedx509 mbedcrypto
     ScePigletv2VSH ScePrecompiledShaders SceSysmodule SceSystemService
     SceUserService SceVideoOut SceAudioOut ScePad SceNet SceNetCtl SceSsl
     SceHttp SceRtc m
