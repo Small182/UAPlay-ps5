@@ -30,6 +30,15 @@ jobs:
             https://github.com/PacBrew/pacbrew-pacman/releases/download/pacbrew-release-1.0/pacbrew-pacman-1.0.deb \
             -o /tmp/pacbrew-pacman.deb
           sudo apt-get install -y /tmp/pacbrew-pacman.deb
+      - name: Provide legacy OpenSSL runtime for PacBrew only
+        run: |
+          curl --fail --location --retry 4 --silent --show-error \
+            https://archive.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2.24_amd64.deb \
+            -o /tmp/pacbrew-libssl11.deb
+          sudo dpkg-deb --extract /tmp/pacbrew-libssl11.deb /opt/pacbrew/openssl11
+          echo /opt/pacbrew/openssl11/usr/lib/x86_64-linux-gnu | sudo tee /etc/ld.so.conf.d/pacbrew-openssl11.conf
+          sudo ldconfig
+          ldd /opt/pacbrew/pacman/bin/pacman | grep libcrypto.so.1.1
       - name: Install OpenOrbis and PS4 ports (SDL, mpv, FFmpeg, curl)
         run: |
           sudo pacbrew-pacman --noconfirm -Sy
