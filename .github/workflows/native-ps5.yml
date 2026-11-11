@@ -43,6 +43,21 @@ jobs:
         run: bash scripts/prepare-tmdb-key.sh
       - name: Cross-compile the native PS5 UAPlay title
         run: bash scripts/build-ps5-software.sh
+      - name: Verify and archive the native title folder
+        run: |
+          title="$PS5_NATIVE_OUTPUT/$PS5_TITLE_ID"
+          test -s "$title/eboot.bin"
+          test -s "$title/sce_sys/param.json"
+          test -s "$title/sce_module/libc.prx"
+          test -s "$title/romfs/InterVariable.ttf"
+          chmod 755 "$title/eboot.bin"
+          tar -C "$PS5_NATIVE_OUTPUT" -czf UAPlay-PS5-title-folder.tar.gz "$PS5_TITLE_ID"
+          tar -C "$PS5_NATIVE_OUTPUT" -dzf UAPlay-PS5-title-folder.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UAPlay-PS5-Folder-UNTESTED
+          path: UAPlay-PS5-title-folder.tar.gz
+          if-no-files-found: error
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
