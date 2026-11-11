@@ -11,9 +11,10 @@ The archive includes `PPSA99282/eboot.bin` and the original UAPlay assets.
 Playback and input on firmware 13.60 have **not** been confirmed. This is a
 buildable experimental candidate, **not a validated stable release**.
 
-The new CI packaging step attempts an additional `PPSA99282.ffpkg` UFS2 image
-for ShadowMountPlus. A successful UFS2 checksum and superblock check confirms
-the image format, not on-console launch compatibility.
+The UFS2 packaging step succeeded in
+[run 43070340195](https://github.com/Small182/UAPlay-ps5/actions/runs/43070340195),
+producing `PPSA99282.ffpkg` for ShadowMountPlus. The superblock and title
+layout checks confirm the image format, not on-console launch compatibility.
 
 The `evo-host`/Nuvio experiment is abandoned for this port. A successful
 `ps5-bootstrap.yml` or portable-test workflow is not evidence of a working
