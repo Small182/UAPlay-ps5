@@ -1,7 +1,8 @@
 #ifndef LAMPA_POSTERS_H
 #define LAMPA_POSTERS_H
 
-#ifdef __PS5__
+#if defined(UAPLAY_PS5_SOFTWARE)
+#elif defined(__PS5__)
 #define GL_GLEXT_PROTOTYPES 1
 #include <GL/glcorearb.h>
 #else
@@ -10,10 +11,10 @@
 #include "catalog.h"
 #include <SDL.h>
 
-#ifdef __PS4__
+#if defined(__PS4__) || defined(UAPLAY_PS5_SOFTWARE)
 #include <stdint.h>
 typedef uintptr_t UiTexture;
-extern SDL_Renderer *ps4_ui_renderer;
+extern SDL_Renderer *ui_renderer;
 #else
 typedef GLuint UiTexture;
 #endif

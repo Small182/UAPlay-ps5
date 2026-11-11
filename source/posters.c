@@ -2,7 +2,7 @@
 
 #include <SDL.h>
 #include <SDL_image.h>
-#ifdef __PS5__
+#if defined(__PS5__) && !defined(UAPLAY_PS5_SOFTWARE)
 #define GL_GLEXT_PROTOTYPES 1
 #include <GL/glcorearb.h>
 #endif
@@ -226,13 +226,16 @@ static UiTexture image_texture(const ImageData *data){
 }
 
 UiTexture ui_texture_create(SDL_Surface *rgba){
-#ifdef __PS4__
-    if(ps4_ui_renderer){
-        SDL_Texture *texture=SDL_CreateTextureFromSurface(ps4_ui_renderer,rgba);
+#if defined(__PS4__) || defined(UAPLAY_PS5_SOFTWARE)
+    if(ui_renderer){
+        SDL_Texture *texture=SDL_CreateTextureFromSurface(ui_renderer,rgba);
         if(texture)SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);
         return (UiTexture)texture;
     }
 #endif
+#ifdef UAPLAY_PS5_SOFTWARE
+    return 0;
+#else
     GLuint texture=0;
     glGenTextures(1,&texture);
     if(texture){
@@ -245,18 +248,21 @@ UiTexture ui_texture_create(SDL_Surface *rgba){
                      0,GL_RGBA,GL_UNSIGNED_BYTE,rgba->pixels);
     }
     return texture;
+#endif
 }
 
 void ui_texture_destroy(UiTexture texture){
     if(!texture)return;
-#ifdef __PS4__
-    if(ps4_ui_renderer){
+#if defined(__PS4__) || defined(UAPLAY_PS5_SOFTWARE)
+    if(ui_renderer){
         SDL_DestroyTexture((SDL_Texture *)texture);
         return;
     }
 #endif
+#ifndef UAPLAY_PS5_SOFTWARE
     GLuint gl_texture=(GLuint)texture;
     glDeleteTextures(1,&gl_texture);
+#endif
 }
 
 static void cache_store(int id,UiTexture texture){

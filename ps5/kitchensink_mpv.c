@@ -9,8 +9,12 @@
 
 #include <SDL.h>
 #include <kitchensink2/kitchensink.h>
+#ifdef UAPLAY_PS5_SOFTWARE
+#include "posters.h"
+#else
 #define GL_GLEXT_PROTOTYPES 1
 #include <GL/glcorearb.h>
+#endif
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -30,7 +34,11 @@ struct mpv_handle {
 
 struct mpv_render_context {
     mpv_handle *owner;
+#ifdef UAPLAY_PS5_SOFTWARE
+    SDL_Texture *texture;
+#else
     GLuint program, vao, vbo, texture;
+#endif
     int width, height;
 };
 
@@ -250,6 +258,58 @@ void mpv_terminate_destroy(mpv_handle *p) {
     free(p);
 }
 
+#ifdef UAPLAY_PS5_SOFTWARE
+int mpv_render_context_create(mpv_render_context **out,mpv_handle *p,const mpv_render_param *args){
+    (void)args;
+    if(!out || !p || !p->ready)return -1;
+    *out=calloc(1,sizeof(**out));
+    if(!*out)return -1;
+    (*out)->owner=p;
+    return 0;
+}
+
+int mpv_render_context_render(mpv_render_context *ctx,const mpv_render_param *args){
+    (void)args;
+    if(!ctx || !ctx->owner || !ui_renderer)return -1;
+    SDL_SetRenderDrawColor(ui_renderer,0,0,0,255);
+    SDL_RenderClear(ui_renderer);
+    mpv_handle *p=ctx->owner;
+    if(!p->decoder)return 0;
+    unsigned char **planes=NULL;
+    int *strides=NULL;
+    SDL_Rect area={0};
+    int result=0;
+    if(Kit_LockPlayerVideoRawFrame(p->decoder,&planes,&strides,&area)==0){
+        if(planes && planes[0] && strides && area.w>0 && area.h>0 && strides[0]/4>=area.w){
+            if(!ctx->texture || area.w!=ctx->width || area.h!=ctx->height){
+                if(ctx->texture)SDL_DestroyTexture(ctx->texture);
+                ctx->texture=SDL_CreateTexture(ui_renderer,SDL_PIXELFORMAT_RGBA32,
+                                              SDL_TEXTUREACCESS_STREAMING,area.w,area.h);
+                ctx->width=area.w;
+                ctx->height=area.h;
+            }
+            result=ctx->texture?SDL_UpdateTexture(ctx->texture,NULL,planes[0],strides[0]):-1;
+        }
+        Kit_UnlockPlayerVideoRawFrame(p->decoder);
+    }
+    if(result<0 || !ctx->texture)return result;
+    SDL_Rect dst={0,0,1280,720};
+    if((int64_t)ctx->width*dst.h>(int64_t)ctx->height*dst.w){
+        dst.h=(int)((int64_t)dst.w*ctx->height/ctx->width);
+        dst.y=(720-dst.h)/2;
+    }else{
+        dst.w=(int)((int64_t)dst.h*ctx->width/ctx->height);
+        dst.x=(1280-dst.w)/2;
+    }
+    return SDL_RenderCopy(ui_renderer,ctx->texture,NULL,&dst);
+}
+
+void mpv_render_context_free(mpv_render_context *ctx){
+    if(!ctx)return;
+    if(ctx->texture)SDL_DestroyTexture(ctx->texture);
+    free(ctx);
+}
+#else
 static GLuint shader(GLenum kind,const char *code) {
     GLuint id=glCreateShader(kind);
     glShaderSource(id,1,&code,NULL);glCompileShader(id);
@@ -353,6 +413,8 @@ void mpv_render_context_free(mpv_render_context *ctx) {
     glDeleteProgram(ctx->program);
     free(ctx);
 }
+
+#endif
 
 int ps5_kitchen_tracks(mpv_handle *p,int subtitles,MediaTrack *out,int max) {
     if(!p || !out || max<1)return 0;

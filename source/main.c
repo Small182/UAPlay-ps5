@@ -4,7 +4,7 @@
 #include <time.h>
 #include <math.h>
 #include <sys/stat.h>
-#ifdef __PS4__
+#if defined(__PS4__) || defined(UAPLAY_PS5_SOFTWARE)
 #include <stdbool.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -14,8 +14,10 @@
 #include <unistd.h>
 #endif
 #ifdef __PS5__
+#ifndef UAPLAY_PS5_SOFTWARE
 #define GL_GLEXT_PROTOTYPES 1
 #include <GL/glcorearb.h>
+#endif
 #include "../ps5/kitchensink_mpv.h"
 #else
 #include <GLES2/gl2.h>
@@ -33,6 +35,9 @@
 #include "library.h"
 #include "playback.h"
 #include "platform_paths.h"
+#ifdef UAPLAY_PS5_SOFTWARE
+#include "../ps5/native_display.h"
+#endif
 
 typedef enum { CATALOG, DETAILS, SOURCES, PLAYER, SETTINGS,
                SEASONS, EPISODES, TRACK_PICKER, VIDEO_SETTINGS } Page;
@@ -494,12 +499,14 @@ static int load_category(int category,const char *query,Movie *movies,char *mess
     return count;
 }
 typedef struct {
-    GLuint program, vbo;
     UiTexture tex, solid_tex;
+#ifndef UAPLAY_PS5_SOFTWARE
+    GLuint program, vbo;
 #ifdef __PS5__
     GLuint vao;
 #endif
     GLint tint, shape, gradient, outline, sampler;
+#endif
     TTF_Font *font;
     TTF_Font *font_big;
     TTF_Font *font_small;
@@ -536,6 +543,7 @@ static TTF_Font *choose_font(Paint *p,const char *s){
     return p->font;
 }
 
+#ifndef UAPLAY_PS5_SOFTWARE
 #ifdef __PS5__
 static const char *vs = "#version 330 core\n"
                         "in vec2 pos;in vec2 uv;out vec2 tc;"
@@ -583,9 +591,12 @@ static GLuint compile(GLenum type, const char *source) {
 #endif
     return s;
 }
+#endif
 static int ui_outline_width=0;
+#if defined(__PS4__) || defined(UAPLAY_PS5_SOFTWARE)
+SDL_Renderer *ui_renderer;
+#endif
 #ifdef __PS4__
-SDL_Renderer *ps4_ui_renderer;
 /* The PacBrew SDL2 driver selects its embedded shaders using this flag. */
 extern bool PS4_PigletShaccAvailable(void);
 
@@ -620,32 +631,74 @@ static void ps4_boot_log(const char *stage,const char *detail){
     ps4_write_boot_log(line,O_APPEND);
 }
 
+#endif
+
+#if defined(__PS4__) || defined(UAPLAY_PS5_SOFTWARE)
 static Uint8 color_byte(float value){
     return (Uint8)(fminf(fmaxf(value,0.f),1.f)*255.f+.5f);
 }
 
-static void ps4_ui_box(const Paint *p,SDL_Rect rect,float r,float g,float b,float a){
+#ifdef UAPLAY_PS5_SOFTWARE
+/* The software renderer uses the same rounded silhouettes as the UI shader. */
+static void rounded_box(SDL_Rect rect,int radius,SDL_Color color,SDL_Texture *texture){
+    enum { segments=6, perimeter=4*(segments+1) };
+    static const float step=1.57079632679f/segments;
+    SDL_Vertex vertices[perimeter+1];
+    int indices[perimeter*3];
+    vertices[0]=(SDL_Vertex){{rect.x+rect.w*.5f,rect.y+rect.h*.5f},color,{.5f,.5f}};
+    for(int corner=0;corner<4;corner++){
+        float cx=rect.x+(corner==0 || corner==3?rect.w-radius:radius);
+        float cy=rect.y+(corner<2?rect.h-radius:radius);
+        for(int point=0;point<=segments;point++){
+            int index=corner*(segments+1)+point;
+            float angle=(corner*segments+point)*step;
+            SDL_FPoint position={cx+radius*cosf(angle),cy+radius*sinf(angle)};
+            vertices[index+1]=(SDL_Vertex){position,color,
+                {(position.x-rect.x)/rect.w,(position.y-rect.y)/rect.h}};
+            indices[index*3]=0;
+            indices[index*3+1]=index+1;
+            indices[index*3+2]=(index+1)%perimeter+1;
+        }
+    }
+    SDL_RenderGeometry(ui_renderer,texture,vertices,perimeter+1,indices,perimeter*3);
+}
+#endif
+
+static void renderer_box(const Paint *p,SDL_Rect rect,float r,float g,float b,float a,int radius){
+    if(rect.w<=0 || rect.h<=0)return;
     SDL_Color color={color_byte(r),color_byte(g),color_byte(b),color_byte(a)};
+#ifdef UAPLAY_PS5_SOFTWARE
+    if(radius>rect.w/2)radius=rect.w/2;
+    if(radius>rect.h/2)radius=rect.h/2;
+    if(radius>0 && !ui_outline_width){
+        SDL_Texture *texture=p->tex!=p->solid_tex?(SDL_Texture *)p->tex:NULL;
+        rounded_box(rect,radius,color,texture);
+        return;
+    }
+#else
+    (void)radius;
+#endif
     if(p->tex!=p->solid_tex){
         SDL_Texture *texture=(SDL_Texture *)p->tex;
         SDL_SetTextureColorMod(texture,color.r,color.g,color.b);
         SDL_SetTextureAlphaMod(texture,color.a);
-        SDL_RenderCopy(ps4_ui_renderer,texture,NULL,&rect);
+        SDL_RenderCopy(ui_renderer,texture,NULL,&rect);
         return;
     }
-    SDL_SetRenderDrawColor(ps4_ui_renderer,color.r,color.g,color.b,color.a);
+    SDL_SetRenderDrawColor(ui_renderer,color.r,color.g,color.b,color.a);
     if(ui_outline_width){
         for(int i=0;i<ui_outline_width && rect.w>0 && rect.h>0;i++){
-            SDL_RenderDrawRect(ps4_ui_renderer,&rect);
+            SDL_RenderDrawRect(ui_renderer,&rect);
             rect.x++;rect.y++;rect.w-=2;rect.h-=2;
         }
-    }else SDL_RenderFillRect(ps4_ui_renderer,&rect);
+    }else SDL_RenderFillRect(ui_renderer,&rect);
 }
 #endif
 
 static int paint_init(Paint *p) {
+#ifndef UAPLAY_PS5_SOFTWARE
 #ifdef __PS4__
-    if(!ps4_ui_renderer){
+    if(!ui_renderer){
 #endif
 #ifdef __PS5__
     glGenVertexArrays(1,&p->vao);
@@ -691,6 +744,7 @@ static int paint_init(Paint *p) {
 #ifdef __PS4__
     }
 #endif
+#endif
     if(TTF_Init()){
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"TTF_Init: %s",TTF_GetError());
         return 0;
@@ -717,10 +771,12 @@ static int paint_init(Paint *p) {
 }
 
 static void box_alpha(Paint *p,int x,int y,int w,int h,float r,float g,float b,float a,int radius) {
+#ifndef UAPLAY_PS5_SOFTWARE
     float x0=x/640.f-1.f,x1=(x+w)/640.f-1.f;
     float y0=1.f-y/360.f,y1=1.f-(y+h)/360.f;
     float vertices[]={x0,y0,0,0, x1,y0,1,0, x0,y1,0,1,
                       x1,y0,1,0, x1,y1,1,1, x0,y1,0,1};
+#endif
     /* Neutral Switch-inspired surfaces. Distinctly colored accents and
        bright buttons keep their original colors. This runs only for flat UI
        rectangles, never movie posters, textures or video overlays. */
@@ -738,13 +794,25 @@ static void box_alpha(Paint *p,int x,int y,int w,int h,float r,float g,float b,f
             r=g=b=.19f+.52f*v;
         }
     }
-#ifdef __PS4__
-    if(ps4_ui_renderer){
+#if defined(__PS4__) || defined(UAPLAY_PS5_SOFTWARE)
+    if(ui_renderer){
+#ifdef UAPLAY_PS5_SOFTWARE
+        if(ui_gradient_pass){
+            for(int row=0;row<h;row+=16){
+                float t=(float)row/h;
+                float gray=ui_light_theme?.957f-.055f*t:.205f-.070f*t;
+                renderer_box(p,(SDL_Rect){x,y+row,w,h-row<16?h-row:16},gray,gray,gray,a,0);
+            }
+            return;
+        }
+#else
         if(ui_gradient_pass)r=g=b=ui_light_theme?.94f:.17f;
-        ps4_ui_box(p,(SDL_Rect){x,y,w,h},r,g,b,a);
+#endif
+        renderer_box(p,(SDL_Rect){x,y,w,h},r,g,b,a,radius);
         return;
     }
 #endif
+#ifndef UAPLAY_PS5_SOFTWARE
     glUseProgram(p->program);
     glUniform4f(p->tint,r,g,b,a);
     glUniform3f(p->shape,(float)w,(float)h,(float)radius);
@@ -769,6 +837,7 @@ static void box_alpha(Paint *p,int x,int y,int w,int h,float r,float g,float b,f
         glUniform4f(p->tint,.27f,.28f,.30f,.46f);
         glDrawArrays(GL_TRIANGLES,0,6);
     }
+#endif
 }
 static void box(Paint *p,int x,int y,int w,int h,float r,float g,float b) {
     box_alpha(p,x,y,w,h,r,g,b,1.f,w>100 && h>40?14:5);
@@ -878,17 +947,18 @@ static void text_color(Paint *p,const char *str,int x,int y,int limit,
     if(!texture)return;
     UiTexture previous=p->tex;p->tex=texture;
     /* Never shrink a long title: clip it at the card edge instead. */
-#ifdef __PS4__
-    if(ps4_ui_renderer){
+#if defined(__PS4__) || defined(UAPLAY_PS5_SOFTWARE)
+    if(ui_renderer){
         SDL_Rect clip={x,y,limit,height};
-        if(limit>0)SDL_RenderSetClipRect(ps4_ui_renderer,&clip);
+        if(limit>0)SDL_RenderSetClipRect(ui_renderer,&clip);
         box_alpha(p,x,y,width,height,r,g,b,1.f,0);
-        if(limit>0)SDL_RenderSetClipRect(ps4_ui_renderer,NULL);
+        if(limit>0)SDL_RenderSetClipRect(ui_renderer,NULL);
         p->tex=previous;
         ui_texture_destroy(transient_texture);
         return;
     }
 #endif
+#ifndef UAPLAY_PS5_SOFTWARE
     if(limit>0){
         glEnable(GL_SCISSOR_TEST);
         glScissor(x,720-y-height,limit,height);
@@ -897,6 +967,7 @@ static void text_color(Paint *p,const char *str,int x,int y,int limit,
     if(limit>0)glDisable(GL_SCISSOR_TEST);
     p->tex=previous;
     ui_texture_destroy(transient_texture);
+#endif
 }
 static void text(Paint *p,const char *str,int x,int y,int limit){
     text_color(p,str,x,y,limit,1,1,1);
@@ -1021,8 +1092,8 @@ static void button(Paint *p,const char *label,int x,int y,int w,int h,int primar
 static void polygon(Paint *p,const float *points,int count,float r,float g,float b){
     if(count<3 || count>60)return;
     if(ui_theme_enabled && ui_light_theme){r=1.f-r;g=1.f-g;b=1.f-b;}
-#ifdef __PS4__
-    if(ps4_ui_renderer){
+#if defined(__PS4__) || defined(UAPLAY_PS5_SOFTWARE)
+    if(ui_renderer){
         SDL_Vertex vertices[61];
         int indices[60*3];
         SDL_Color color={color_byte(r),color_byte(g),color_byte(b),255};
@@ -1037,10 +1108,11 @@ static void polygon(Paint *p,const float *points,int count,float r,float g,float
             indices[3*i+2]=(i+1)%count+1;
         }
         vertices[0]=(SDL_Vertex){center,color,{0.f,0.f}};
-        SDL_RenderGeometry(ps4_ui_renderer,NULL,vertices,count+1,indices,count*3);
+        SDL_RenderGeometry(ui_renderer,NULL,vertices,count+1,indices,count*3);
         return;
     }
 #endif
+#ifndef UAPLAY_PS5_SOFTWARE
     float vertices[(60+2)*4];
     float cx=0,cy=0;
     for(int i=0;i<count;i++){cx+=points[2*i];cy+=points[2*i+1];}
@@ -1066,6 +1138,7 @@ static void polygon(Paint *p,const float *points,int count,float r,float g,float
     glVertexAttribPointer(0,2,GL_FLOAT,GL_FALSE,4*sizeof(float),(void*)0);
     glVertexAttribPointer(1,2,GL_FLOAT,GL_FALSE,4*sizeof(float),(void*)(2*sizeof(float)));
     glDrawArrays(GL_TRIANGLE_FAN,0,count+2);
+#endif
 }
 static void search_icon(Paint *p,int cx,int cy,float bg_r,float bg_g,float bg_b){
     const float fg=.96f;
@@ -1209,14 +1282,16 @@ static void poster(Paint *p,const Movie *movie,int x,int y,int width,int height,
 }
 static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
                  Source *sources,int sn,int source,const char *heading,const char *status) {
+#ifndef UAPLAY_PS5_SOFTWARE
 #ifdef __PS4__
-    if(!ps4_ui_renderer){
+    if(!ui_renderer){
 #endif
         glViewport(0,0,1280,720);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
 #ifdef __PS4__
     }
+#endif
 #endif
     ui_theme_enabled=1;
     ui_gradient_pass=1;
@@ -1728,7 +1803,7 @@ static void *ps4_video_pixels;
 
 static int render_ps4_video(mpv_render_context *render){
     if(!ps4_video_texture){
-        ps4_video_texture=SDL_CreateTexture(ps4_ui_renderer,SDL_PIXELFORMAT_ABGR8888,
+        ps4_video_texture=SDL_CreateTexture(ui_renderer,SDL_PIXELFORMAT_ABGR8888,
                                            SDL_TEXTUREACCESS_STREAMING,
                                            PS4_VIDEO_WIDTH,PS4_VIDEO_HEIGHT);
         if(!ps4_video_texture)return MPV_ERROR_GENERIC;
@@ -1753,7 +1828,7 @@ static int render_ps4_video(mpv_render_context *render){
     int result=mpv_render_context_render(render,frame);
     if(result<0)return result;
     if(SDL_UpdateTexture(ps4_video_texture,NULL,ps4_video_pixels,PS4_VIDEO_STRIDE)<0 ||
-       SDL_RenderCopy(ps4_ui_renderer,ps4_video_texture,NULL,NULL)<0){
+       SDL_RenderCopy(ui_renderer,ps4_video_texture,NULL,NULL)<0){
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"PS4 video texture: %s",SDL_GetError());
         return MPV_ERROR_GENERIC;
     }
@@ -1782,8 +1857,11 @@ static int open_player(mpv_handle **handle,mpv_render_context **render){
     mpv_request_log_messages(player,"warn");
     int result=mpv_initialize(player);
     if(result>=0){
+#ifdef UAPLAY_PS5_SOFTWARE
+        result=mpv_render_context_create(render,player,NULL);
+#else
 #ifdef __PS4__
-        if(ps4_ui_renderer){
+        if(ui_renderer){
             mpv_render_param init[]={{MPV_RENDER_PARAM_API_TYPE,MPV_RENDER_API_TYPE_SW},
                                     {MPV_RENDER_PARAM_INVALID,NULL}};
             result=mpv_render_context_create(render,player,init);
@@ -1796,6 +1874,7 @@ static int open_player(mpv_handle **handle,mpv_render_context **render){
                                 {MPV_RENDER_PARAM_INVALID,NULL}};
         result=mpv_render_context_create(render,player,init);
         }
+#endif
     }
     if(result<0){
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"mpv: %s",mpv_error_string(result));
@@ -1807,13 +1886,18 @@ static int open_player(mpv_handle **handle,mpv_render_context **render){
 }
 
 static void present_ui(SDL_Window *window){
+#ifdef UAPLAY_PS5_SOFTWARE
+    (void)window;
+    SDL_RenderPresent(ui_renderer);
+#else
 #ifdef __PS4__
-    if(ps4_ui_renderer){
-        SDL_RenderPresent(ps4_ui_renderer);
+    if(ui_renderer){
+        SDL_RenderPresent(ui_renderer);
         return;
     }
 #endif
     SDL_GL_SwapWindow(window);
+#endif
 }
 
 int main(void) {
@@ -1824,14 +1908,16 @@ int main(void) {
 #ifdef __PS4__
     ps4_write_boot_log("[UAPlay] Entered main\n",O_TRUNC);
 #else
+#ifndef UAPLAY_PS5_SOFTWARE
     chdir("/app0");
     mkdir(UAPLAY_CATALOG_DIR,0777);
     curl_global_init(CURL_GLOBAL_DEFAULT);
 #endif
+#endif
 #else
     romfsInit();
 #endif
-#ifndef __PS4__
+#if !defined(__PS4__) && !defined(UAPLAY_PS5_SOFTWARE)
     library_init();
     theme_load();
 #endif
@@ -1839,6 +1925,10 @@ int main(void) {
     Result network_result = socketInitializeDefault();
     if (R_SUCCEEDED(network_result)) curl_global_init(CURL_GLOBAL_DEFAULT);
 #endif
+#ifdef UAPLAY_PS5_SOFTWARE
+    SDL_Window *window=ps5_open_display(&ui_renderer);
+    if(!window)return 2;
+#else
     SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS,"1");
 #ifdef __PS4__
     ps4_boot_log("Initializing SDL video",NULL);
@@ -1883,12 +1973,12 @@ int main(void) {
 #ifdef __PS4__
     if(!PS4_PigletShaccAvailable()){
         ps4_boot_log("Creating SDL renderer with embedded Piglet shaders",NULL);
-        ps4_ui_renderer=SDL_CreateRenderer(window,-1,SDL_RENDERER_ACCELERATED);
-        if(!ps4_ui_renderer ||
-           SDL_RenderSetLogicalSize(ps4_ui_renderer,1280,720)<0 ||
-           SDL_SetRenderDrawBlendMode(ps4_ui_renderer,SDL_BLENDMODE_BLEND)<0){
+        ui_renderer=SDL_CreateRenderer(window,-1,SDL_RENDERER_ACCELERATED);
+        if(!ui_renderer ||
+           SDL_RenderSetLogicalSize(ui_renderer,1280,720)<0 ||
+           SDL_SetRenderDrawBlendMode(ui_renderer,SDL_BLENDMODE_BLEND)<0){
             ps4_boot_log("SDL renderer setup failed",SDL_GetError());
-            if(ps4_ui_renderer)SDL_DestroyRenderer(ps4_ui_renderer);
+            if(ui_renderer)SDL_DestroyRenderer(ui_renderer);
             SDL_DestroyWindow(window);SDL_Quit();return 3;
         }
     }else
@@ -1904,12 +1994,16 @@ int main(void) {
             SDL_DestroyWindow(window);SDL_Quit();return 3;
         }
     }
+#endif
     Paint paint={0};
     int exit_code=0;
 #ifdef __PS4__
     ps4_boot_log("Initializing UI and fonts",NULL);
 #endif
     if(!paint_init(&paint)){
+#ifdef UAPLAY_PS5_SOFTWARE
+        ps5_boot_trace("UI or font setup failed",SDL_GetError());
+#endif
 #ifdef __PS4__
         ps4_boot_log("UI renderer or font setup failed",SDL_GetError());
 #else
@@ -1918,7 +2012,25 @@ int main(void) {
         exit_code=4;
         goto cleanup_paint;
     }
-#ifdef __PS4__
+#ifdef UAPLAY_PS5_SOFTWARE
+    library_init();
+    theme_load();
+    draw(&paint,CATALOG,NULL,0,0,NULL,0,0,home_headings[0],"Завантаження каталогу...");
+    present_ui(window);
+    ps5_boot_trace("First UI frame submitted",NULL);
+    ps5_release_splash();
+    if(SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER)<0)
+        ps5_boot_trace("Controller initialization failed",SDL_GetError());
+    if(SDL_InitSubSystem(SDL_INIT_AUDIO)<0)
+        ps5_boot_trace("Audio initialization failed",SDL_GetError());
+    CURLcode curl_status=curl_global_init(CURL_GLOBAL_DEFAULT);
+    if(curl_status!=CURLE_OK){
+        ps5_boot_trace("curl initialization failed",curl_easy_strerror(curl_status));
+        exit_code=5;
+        goto cleanup_paint;
+    }
+    catalog_http_init();
+#elif defined(__PS4__)
     library_init();
     theme_load();
     draw(&paint,CATALOG,NULL,0,0,NULL,0,0,home_headings[0],"Завантаження каталогу...");
@@ -1954,7 +2066,7 @@ int main(void) {
         if(SDL_IsGameController(i)){pad=SDL_GameControllerOpen(i);break;}
     mpv_handle *player=NULL;
     mpv_render_context *render=NULL;
-#ifndef __PS4__
+#if !defined(__PS4__) && !defined(UAPLAY_PS5_SOFTWARE)
     open_player(&player,&render);
 #endif
     Source sources[UAKINO_MAX]={0};
@@ -1962,7 +2074,7 @@ int main(void) {
     Page page=CATALOG;
     char query[192]={0},message[256]={0};
     catalog_loader_init();
-#ifdef __PS4__
+#if defined(__PS4__) || defined(UAPLAY_PS5_SOFTWARE)
     if(catalog_loader.thread){
         SDL_LockMutex(catalog_loader.mutex);
         for(int i=0;i<HOME_SHELF_COUNT;i++)home_shelves[i].state=1;
@@ -2830,8 +2942,11 @@ int main(void) {
         if(page==PLAYER && render){
             ui_theme_enabled=0;
             int render_result;
+#ifdef UAPLAY_PS5_SOFTWARE
+            render_result=mpv_render_context_render(render,NULL);
+#else
 #ifdef __PS4__
-            if(ps4_ui_renderer)render_result=render_ps4_video(render);
+            if(ui_renderer)render_result=render_ps4_video(render);
             else
 #endif
             {
@@ -2853,6 +2968,7 @@ int main(void) {
             glBlendEquation(GL_FUNC_ADD);
             glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
             }
+#endif
             if(!video_loaded){
                 box(&paint,0,0,1280,720,.035f,.044f,.059f);
                 box_alpha(&paint,35,33,168,53,.10f,.15f,.22f,.95f,14);
@@ -2938,6 +3054,9 @@ cleanup_paint:
     if(paint.font)TTF_CloseFont(paint.font);
     if(TTF_WasInit())TTF_Quit();
     if(paint.tex)ui_texture_destroy(paint.tex);
+#ifdef UAPLAY_PS5_SOFTWARE
+    SDL_DestroyRenderer(ui_renderer);
+#else
     if(paint.vbo)glDeleteBuffers(1,&paint.vbo);
     if(paint.program)glDeleteProgram(paint.program);
 #ifdef __PS5__
@@ -2946,9 +3065,10 @@ cleanup_paint:
 #ifdef __PS4__
     if(ps4_video_texture)SDL_DestroyTexture(ps4_video_texture);
     free(ps4_video_pixels);
-    if(ps4_ui_renderer)SDL_DestroyRenderer(ps4_ui_renderer);
+    if(ui_renderer)SDL_DestroyRenderer(ui_renderer);
 #endif
     if(gl)SDL_GL_DeleteContext(gl);
+#endif
     SDL_DestroyWindow(window);SDL_Quit();
 #ifdef __PS5__
     curl_global_cleanup();

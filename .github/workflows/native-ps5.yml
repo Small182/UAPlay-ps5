@@ -1,0 +1,55 @@
+name: UAPlay native PS5 VideoOut
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [native-ps5]
+    paths:
+      - 'source/**'
+      - 'ps5/**'
+      - 'romfs/**'
+      - 'scripts/**'
+      - '.github/workflows/native-ps5.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      PS5_NATIVE_TEMPLATE: /tmp/uaplay-ps5-title-template
+      PS5_NATIVE_OUTPUT: /tmp/uaplay-ps5-output
+      PS5_TITLE_ID: PPSA99283
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cross-build and test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 lld-18 ccache git curl wget unzip rsync \
+            build-essential pkg-config python3 cmake ninja-build libcurl4-openssl-dev
+      - name: Verify portable catalogue behavior
+        run: bash scripts/test-portable.sh
+      - name: Retrieve pinned native title runtime
+        run: |
+          git clone --quiet https://github.com/leolobato/ps5-homebrew-ui.git "$PS5_NATIVE_TEMPLATE"
+          git -C "$PS5_NATIVE_TEMPLATE" checkout --detach 0a6fb4b851da86cd4e9512aae3abf1352a96086a
+          chmod +x "$PS5_NATIVE_TEMPLATE/tooling/prospero-clang18"
+          bash "$PS5_NATIVE_TEMPLATE/tools/setup-native-dependencies.sh"
+      - name: Prepare TMDb key
+        env:
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+        run: bash scripts/prepare-tmdb-key.sh
+      - name: Cross-compile the native PS5 UAPlay title
+        run: bash scripts/build-ps5-software.sh
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Package and validate PS5 UFS2 image
+        run: bash scripts/package-native-ffpkg.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UAPlay-PS5-VideoOut-UNTESTED
+          path: /tmp/uaplay-ps5-output/PPSA99283.ffpkg
+          if-no-files-found: error

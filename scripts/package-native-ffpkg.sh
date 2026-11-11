@@ -6,8 +6,10 @@ set -euo pipefail
 : "${PS5_NATIVE_TEMPLATE:?Point to the pinned PS5 title template}"
 : "${PS5_NATIVE_OUTPUT:?Point to the native title output directory}"
 
-title="$PS5_NATIVE_OUTPUT/PPSA99282"
-image="$PS5_NATIVE_OUTPUT/PPSA99282.ffpkg"
+title_id=${PS5_TITLE_ID:-PPSA99282}
+[[ $title_id =~ ^PPSA[0-9]{5}$ ]] || { echo 'Invalid PS5 title ID' >&2; exit 2; }
+title="$PS5_NATIVE_OUTPUT/$title_id"
+image="$PS5_NATIVE_OUTPUT/$title_id.ffpkg"
 for required in "$title/eboot.bin" "$title/sce_sys/param.json" \
                 "$title/sce_module/libc.prx" "$title/romfs/InterVariable.ttf"; do
     if [[ ! -s $required ]]; then
