@@ -12,8 +12,11 @@ import sys
 
 
 def main() -> None:
-    if len(sys.argv) != 2:
-        raise SystemExit("usage: patch-ps5-linker.py <template/tools/build.sh>")
+    options = sys.argv[2:]
+    if len(sys.argv) < 2 or options not in ([], ["--without-ps5-keyboard"]):
+        raise SystemExit(
+            "usage: patch-ps5-linker.py <template/tools/build.sh> [--without-ps5-keyboard]"
+        )
     target = pathlib.Path(sys.argv[1])
     text = target.read_text(encoding="utf-8")
     marker = '    printf \'PacBrew dependencies: %s\\n\' "${pacbrew_packages[*]:-(manual archives)}"\n'
@@ -31,7 +34,22 @@ def main() -> None:
     done
     pacbrew_libs=("${filtered_pacbrew_libs[@]}")
 """
-    target.write_text(text.replace(marker, replacement + marker), encoding="utf-8")
+    text = text.replace(marker, replacement + marker)
+    if options:
+        wrap_marker = "wrap_options=()\n"
+        if text.count(wrap_marker) != 1:
+            raise SystemExit("pinned PS5 template changed: linker wrap hook not found once")
+        wraps = (
+            "--wrap=PS5_Keyboard_Init",
+            "--wrap=PS5_Keyboard_Open",
+            "--wrap=PS5_Keyboard_PumpEvents",
+            "--wrap=PS5_HasScreenKeyboardSupport",
+            "--wrap=PS5_ShowScreenKeyboard",
+            "--wrap=PS5_HideScreenKeyboard",
+            "--wrap=PS5_IsScreenKeyboardShown",
+        )
+        text = text.replace(wrap_marker, wrap_marker + "wrap_options+=(" + " ".join(wraps) + ")\n")
+    target.write_text(text, encoding="utf-8")
 
 
 if __name__ == "__main__":

@@ -7,6 +7,44 @@
 extern void hui_release_splash(void);
 extern int sceSystemServiceHideSplashScreen(void);
 
+/* The payload SDL video driver eagerly calls the keyboard/IME services,
+   which are unavailable to this native media title. DualSense uses SDL's
+   separate joystick driver. Keep the video driver independent of IME. */
+struct SDL_VideoDevice;
+
+int __wrap_PS5_Keyboard_Init(void){
+    return 0;
+}
+
+int __wrap_PS5_Keyboard_Open(void){
+    return 0;
+}
+
+int __wrap_PS5_Keyboard_PumpEvents(void){
+    return 0;
+}
+
+SDL_bool __wrap_PS5_HasScreenKeyboardSupport(struct SDL_VideoDevice *device){
+    (void)device;
+    return SDL_FALSE;
+}
+
+void __wrap_PS5_ShowScreenKeyboard(struct SDL_VideoDevice *device,SDL_Window *window){
+    (void)device;
+    (void)window;
+}
+
+void __wrap_PS5_HideScreenKeyboard(struct SDL_VideoDevice *device,SDL_Window *window){
+    (void)device;
+    (void)window;
+}
+
+SDL_bool __wrap_PS5_IsScreenKeyboardShown(struct SDL_VideoDevice *device,SDL_Window *window){
+    (void)device;
+    (void)window;
+    return SDL_FALSE;
+}
+
 void ps5_boot_trace(const char *stage,const char *detail){
     FILE *log=fopen(UAPLAY_DATA_ROOT "/native-boot.log","a");
     if(log){

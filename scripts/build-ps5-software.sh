@@ -40,7 +40,7 @@ fi
 cp "$project/ps5/icon0.png" "$app/sce_sys/icon0.png"
 # PacBrew's .pc files contain Linux-only linker flags even for their PS5
 # archives. Normalize the flags in the throwaway pinned template checkout.
-python3 "$project/scripts/patch-ps5-linker.py" "$app/tools/build.sh"
+python3 "$project/scripts/patch-ps5-linker.py" "$app/tools/build.sh" --without-ps5-keyboard
 
 (
     cd "$app"
@@ -55,7 +55,7 @@ import sys
 path = Path(sys.argv[1])
 metadata = json.loads(path.read_text(encoding="utf-8"))
 metadata.pop("kernel", None)
-metadata["contentVersion"] = "01.000.011"
+metadata["contentVersion"] = "01.000.012"
 path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 PY
     make libc
