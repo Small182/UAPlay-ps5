@@ -41,6 +41,8 @@ The [`native-sdl.yml`](.github/workflows/native-sdl.yml) workflow:
    compatibility layer supplies APIs omitted from the public SDK; these
    fallbacks require runtime testing.
 6. Packages `PPSA99282/eboot.bin`, native runtime modules, fonts and metadata.
+7. After assembling `romfs/`, creates and validates a UFS2 `.ffpkg` image for
+   ShadowMountPlus, using the pinned UFS2Tool source and .NET 8.
 
 SDL bridge and library compilation can take considerable time. The workflow's output is
 named `UAPlay-PS5-native-UNTESTED` on purpose: a successful link does not imply
@@ -80,6 +82,10 @@ Actions secret, generated as an untracked header in CI.
 The previous native **bootstrap** title (`ps5/bootstrap_main.cpp`) is a separate
 graphics/title smoke test and does not contain the UAPlay interface. Do not
 confuse a bootstrap artifact or an `evo-host` artifact with this native port.
+
+The PS5 `.ffpkg` is a filesystem image for ShadowMountPlus, not a PS4 fPKG.
+A PlayStation 4 compatibility release requires a distinct OpenOrbis build of
+the native UI, SDL graphics backend and FFmpeg player.
 
 ## External dependencies and licenses
 

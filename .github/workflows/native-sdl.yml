@@ -10,6 +10,7 @@ on:
       - 'ps5/posix_compat.c'
       - 'scripts/build-native-ps5.sh'
       - 'scripts/patch-ps5-linker.py'
+      - 'scripts/package-native-ffpkg.sh'
       - '.github/workflows/native-sdl.yml'
 
 permissions:
@@ -103,4 +104,18 @@ jobs:
         with:
           name: UAPlay-PS5-native-UNTESTED
           path: UAPlay-PS5-native-candidate.tar.gz
+          if-no-files-found: error
+      - name: Prepare .NET toolchain for UFS2 packaging
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Package PS5 ShadowMountPlus UFS2 image
+        env:
+          PS5_NATIVE_TEMPLATE: /tmp/uaplay-ps5-title-template
+          PS5_NATIVE_OUTPUT: /tmp/uaplay-ps5-output
+        run: bash scripts/package-native-ffpkg.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UAPlay-PS5-FFPKG-UNTESTED
+          path: /tmp/uaplay-ps5-output/PPSA99282.ffpkg
           if-no-files-found: error
