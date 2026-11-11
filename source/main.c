@@ -2129,17 +2129,27 @@ int main(void) {
                 tx=(int)(e.tfinger.x*1280);ty=(int)(e.tfinger.y*720);
             }else if(e.type==SDL_MOUSEBUTTONDOWN &&
                      e.button.button==SDL_BUTTON_LEFT && e.button.which!=SDL_TOUCH_MOUSEID){
+#ifdef UAPLAY_PS5_SOFTWARE
+                /* SDL's logical renderer already translates mouse events. */
+                tx=e.button.x;ty=e.button.y;
+#else
                 int ww=1280,hh=720;
                 SDL_GetWindowSize(window,&ww,&hh);
                 tx=e.button.x*1280/(ww?ww:1280);
                 ty=e.button.y*720/(hh?hh:720);
+#endif
             }else if(page==PLAYER && e.type==SDL_MOUSEMOTION &&
                      (e.motion.state&SDL_BUTTON_LMASK) && video_loaded &&
                      SDL_GetTicks()<controls_until){
+#ifdef UAPLAY_PS5_SOFTWARE
+                /* SDL's logical renderer already translates mouse events. */
+                tx=e.motion.x;ty=e.motion.y;
+#else
                 int ww=1280,hh=720;
                 SDL_GetWindowSize(window,&ww,&hh);
                 tx=e.motion.x*1280/(ww?ww:1280);
                 ty=e.motion.y*720/(hh?hh:720);
+#endif
             }
             if(tx>=0 && ty>=0){
                 if(page==PLAYER){

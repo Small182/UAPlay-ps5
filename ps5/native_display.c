@@ -29,7 +29,13 @@ SDL_Window *ps5_open_display(SDL_Renderer **renderer){
         return NULL;
     }
     ps5_boot_trace("Creating VideoOut window",SDL_GetCurrentVideoDriver());
-    SDL_Window *window=SDL_CreateWindow("UAPlay",0,0,1280,720,SDL_WINDOW_SHOWN);
+    SDL_DisplayMode mode;
+    if(SDL_GetDesktopDisplayMode(0,&mode)<0){
+        ps5_boot_trace("Display mode query failed",SDL_GetError());
+        SDL_Quit();
+        return NULL;
+    }
+    SDL_Window *window=SDL_CreateWindow("UAPlay",0,0,mode.w,mode.h,SDL_WINDOW_SHOWN);
     if(!window){
         ps5_boot_trace("Window creation failed",SDL_GetError());
         SDL_Quit();

@@ -45,9 +45,10 @@ python3 "$project/scripts/patch-ps5-linker.py" "$app/tools/build.sh"
 (
     cd "$app"
     make init TITLE_ID=PPSA99283 APP_NAME='UAPlay PS5' APP_CATEGORY=media
+    make libc
     APP_DEFINITIONS='__PS5__ SDL_MAIN_HANDLED UAPLAY_PS5_SOFTWARE' \
     PACBREW_PACKAGES='sdl2 SDL2_ttf SDL2_image libcurl SDL_kitchensink libavformat libavcodec libavutil libswscale libswresample libass' \
-    make app
+    bash tools/build.sh Folder
 )
 
 test -s "$app/dist/PPSA99283/eboot.bin"
