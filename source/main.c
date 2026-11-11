@@ -4,6 +4,10 @@
 #include <time.h>
 #include <math.h>
 #include <sys/stat.h>
+#ifdef __PS4__
+#include <stdbool.h>
+#include <orbis/libkernel.h>
+#endif
 #if defined(__PS5__) || defined(__PS4__)
 #include <unistd.h>
 #endif
@@ -488,7 +492,8 @@ static int load_category(int category,const char *query,Movie *movies,char *mess
     return count;
 }
 typedef struct {
-    GLuint program, vbo, tex, solid_tex;
+    GLuint program, vbo;
+    UiTexture tex, solid_tex;
 #ifdef __PS5__
     GLuint vao;
 #endif
@@ -567,7 +572,7 @@ static GLuint compile(GLenum type, const char *source) {
     GLuint s = glCreateShader(type);
     glShaderSource(s, 1, &source, NULL);
     glCompileShader(s);
-#ifdef __PS5__
+#if defined(__PS5__) || defined(__PS4__)
     GLint ok=0;glGetShaderiv(s,GL_COMPILE_STATUS,&ok);
     if(!ok){
         char error[1024]={0};glGetShaderInfoLog(s,sizeof(error),NULL,error);
@@ -576,7 +581,50 @@ static GLuint compile(GLenum type, const char *source) {
 #endif
     return s;
 }
+static int ui_outline_width=0;
+#ifdef __PS4__
+SDL_Renderer *ps4_ui_renderer;
+/* The PacBrew SDL2 driver selects its embedded shaders using this flag. */
+extern bool PS4_PigletShaccAvailable(void);
+
+static void ps4_boot_log(const char *stage,const char *detail){
+    char line[512];
+    snprintf(line,sizeof(line),"[UAPlay] %s%s%s\n",stage,detail?": ":"",detail?detail:"");
+    sceKernelDebugOutText(0,line);
+    FILE *log=fopen(UAPLAY_DATA_ROOT "/boot.log","a");
+    if(log){
+        fputs(line,log);
+        fclose(log);
+    }
+}
+
+static Uint8 color_byte(float value){
+    return (Uint8)(SDL_clamp(value,0.f,1.f)*255.f+.5f);
+}
+
+static void ps4_ui_box(const Paint *p,SDL_Rect rect,float r,float g,float b,float a){
+    SDL_Color color={color_byte(r),color_byte(g),color_byte(b),color_byte(a)};
+    if(p->tex!=p->solid_tex){
+        SDL_Texture *texture=(SDL_Texture *)p->tex;
+        SDL_SetTextureColorMod(texture,color.r,color.g,color.b);
+        SDL_SetTextureAlphaMod(texture,color.a);
+        SDL_RenderCopy(ps4_ui_renderer,texture,NULL,&rect);
+        return;
+    }
+    SDL_SetRenderDrawColor(ps4_ui_renderer,color.r,color.g,color.b,color.a);
+    if(ui_outline_width){
+        for(int i=0;i<ui_outline_width && rect.w>0 && rect.h>0;i++){
+            SDL_RenderDrawRect(ps4_ui_renderer,&rect);
+            rect.x++;rect.y++;rect.w-=2;rect.h-=2;
+        }
+    }else SDL_RenderFillRect(ps4_ui_renderer,&rect);
+}
+#endif
+
 static int paint_init(Paint *p) {
+#ifdef __PS4__
+    if(!ps4_ui_renderer){
+#endif
 #ifdef __PS5__
     glGenVertexArrays(1,&p->vao);
     glBindVertexArray(p->vao);
@@ -593,7 +641,7 @@ static int paint_init(Paint *p) {
     GLint linked=0;
     glGetProgramiv(p->program,GL_LINK_STATUS,&linked);
     if (!linked) {
-#ifdef __PS5__
+#if defined(__PS5__) || defined(__PS4__)
         char error[1024]={0};glGetProgramInfoLog(p->program,sizeof(error),NULL,error);
         fprintf(stderr,"[UAPlay] GLSL link failed: %s\n",error);
 #endif
@@ -607,7 +655,9 @@ static int paint_init(Paint *p) {
     glUseProgram(p->program);
     glUniform1i(p->sampler,0);
     glGenBuffers(1,&p->vbo);
-    glGenTextures(1,&p->tex);
+    GLuint texture=0;
+    glGenTextures(1,&texture);
+    p->tex=texture;
     p->solid_tex=p->tex;
     glBindTexture(GL_TEXTURE_2D,p->tex);
     glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
@@ -616,34 +666,39 @@ static int paint_init(Paint *p) {
     glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
     unsigned char white[4]={255,255,255,255};
     glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,1,1,0,GL_RGBA,GL_UNSIGNED_BYTE,white);
-    if (TTF_Init()) return 0;
+#ifdef __PS4__
+    }
+#endif
+    if(TTF_Init()){
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"TTF_Init: %s",TTF_GetError());
+        return 0;
+    }
     /* Inter has SF/Helvetica-like proportions and includes Ukrainian glyphs. */
     p->font=TTF_OpenFont(UAPLAY_ASSET("InterVariable.ttf"),22);
     p->font_big=TTF_OpenFont(UAPLAY_ASSET("InterVariable.ttf"),31);
     p->font_small=TTF_OpenFont(UAPLAY_ASSET("InterVariable.ttf"),19);
     p->font_tiny=TTF_OpenFont(UAPLAY_ASSET("InterVariable.ttf"),15);
     for(int i=0;i<7;i++){
-        char path[96];snprintf(path,sizeof(path),"%sNotoSans%s.ttf",
-#if defined(__PS5__) || defined(__PS4__)
-                                "romfs/",
-#else
-                                "romfs:/",
-#endif
-                                script_fonts[i]);
+        char path[96];
+        snprintf(path,sizeof(path),UAPLAY_ASSET("NotoSans%s.ttf"),script_fonts[i]);
         p->scripts[i]=TTF_OpenFont(path,22);
         p->scripts_small[i]=TTF_OpenFont(path,19);
         p->scripts_big[i]=TTF_OpenFont(path,31);
         p->scripts_tiny[i]=TTF_OpenFont(path,15);
     }
-    return p->font != NULL;
+    if(!p->font || !p->font_big || !p->font_small || !p->font_tiny){
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Required font %s: %s",
+                     UAPLAY_ASSET("InterVariable.ttf"),TTF_GetError());
+        return 0;
+    }
+    return 1;
 }
-static int ui_outline_width=0;
+
 static void box_alpha(Paint *p,int x,int y,int w,int h,float r,float g,float b,float a,int radius) {
     float x0=x/640.f-1.f,x1=(x+w)/640.f-1.f;
     float y0=1.f-y/360.f,y1=1.f-(y+h)/360.f;
     float vertices[]={x0,y0,0,0, x1,y0,1,0, x0,y1,0,1,
                       x1,y0,1,0, x1,y1,1,1, x0,y1,0,1};
-    glUseProgram(p->program);
     /* Neutral Switch-inspired surfaces. Distinctly colored accents and
        bright buttons keep their original colors. This runs only for flat UI
        rectangles, never movie posters, textures or video overlays. */
@@ -661,6 +716,14 @@ static void box_alpha(Paint *p,int x,int y,int w,int h,float r,float g,float b,f
             r=g=b=.19f+.52f*v;
         }
     }
+#ifdef __PS4__
+    if(ps4_ui_renderer){
+        if(ui_gradient_pass)r=g=b=ui_light_theme?.94f:.17f;
+        ps4_ui_box(p,(SDL_Rect){x,y,w,h},r,g,b,a);
+        return;
+    }
+#endif
+    glUseProgram(p->program);
     glUniform4f(p->tint,r,g,b,a);
     glUniform3f(p->shape,(float)w,(float)h,(float)radius);
     glUniform1f(p->gradient,ui_gradient_pass?(ui_light_theme?2.f:1.f):0.f);
@@ -697,7 +760,7 @@ static void box(Paint *p,int x,int y,int w,int h,float r,float g,float b) {
 typedef struct {
     char *label;
     TTF_Font *font;
-    GLuint texture;
+    UiTexture texture;
     int width,height;
     size_t bytes;
     unsigned long long stamp;
@@ -708,7 +771,7 @@ static unsigned long long text_cache_clock;
 
 static void text_cache_release(int slot){
     TextTexture *entry=&text_cache[slot];
-    if(entry->texture)glDeleteTextures(1,&entry->texture);
+    ui_texture_destroy(entry->texture);
     free(entry->label);
     if(entry->bytes<=text_cache_bytes)text_cache_bytes-=entry->bytes;
     memset(entry,0,sizeof(*entry));
@@ -731,19 +794,6 @@ static int text_cache_oldest_occupied(void){
            (oldest<0 || text_cache[i].stamp<text_cache[oldest].stamp))oldest=i;
     return oldest;
 }
-static GLuint create_glyph_texture(const SDL_Surface *rgba){
-    GLuint texture=0;
-    glGenTextures(1,&texture);
-    if(!texture)return 0;
-    glBindTexture(GL_TEXTURE_2D,texture);
-    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
-    glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,rgba->w,rgba->h,0,
-                 GL_RGBA,GL_UNSIGNED_BYTE,rgba->pixels);
-    return texture;
-}
 static void text_color(Paint *p,const char *str,int x,int y,int limit,
                        float r,float g,float b) {
     if (!str || !*str) return;
@@ -763,7 +813,7 @@ static void text_color(Paint *p,const char *str,int x,int y,int limit,
             found=entry;break;
         }
     }
-    GLuint transient_texture=0;
+    UiTexture transient_texture=0;
     int width=0,height=0;
     if(found){
         found->stamp=++text_cache_clock;
@@ -789,7 +839,7 @@ static void text_color(Paint *p,const char *str,int x,int y,int limit,
             if(copy){
                 strcpy(copy,str);
                 TextTexture *entry=&text_cache[slot];
-                entry->texture=create_glyph_texture(rgba);
+                entry->texture=ui_texture_create(rgba);
                 if(entry->texture){
                     entry->label=copy;entry->font=font;
                     entry->width=width;entry->height=height;
@@ -799,13 +849,24 @@ static void text_color(Paint *p,const char *str,int x,int y,int limit,
                 }else free(copy);
             }
         }
-        if(!found)transient_texture=create_glyph_texture(rgba);
+        if(!found)transient_texture=ui_texture_create(rgba);
         SDL_FreeSurface(rgba);
     }
-    GLuint texture=found?found->texture:transient_texture;
+    UiTexture texture=found?found->texture:transient_texture;
     if(!texture)return;
-    GLuint previous=p->tex;p->tex=texture;
+    UiTexture previous=p->tex;p->tex=texture;
     /* Never shrink a long title: clip it at the card edge instead. */
+#ifdef __PS4__
+    if(ps4_ui_renderer){
+        SDL_Rect clip={x,y,limit,height};
+        if(limit>0)SDL_RenderSetClipRect(ps4_ui_renderer,&clip);
+        box_alpha(p,x,y,width,height,r,g,b,1.f,0);
+        if(limit>0)SDL_RenderSetClipRect(ps4_ui_renderer,NULL);
+        p->tex=previous;
+        ui_texture_destroy(transient_texture);
+        return;
+    }
+#endif
     if(limit>0){
         glEnable(GL_SCISSOR_TEST);
         glScissor(x,720-y-height,limit,height);
@@ -813,7 +874,7 @@ static void text_color(Paint *p,const char *str,int x,int y,int limit,
     box_alpha(p,x,y,width,height,r,g,b,1.f,0);
     if(limit>0)glDisable(GL_SCISSOR_TEST);
     p->tex=previous;
-    if(transient_texture)glDeleteTextures(1,&transient_texture);
+    ui_texture_destroy(transient_texture);
 }
 static void text(Paint *p,const char *str,int x,int y,int limit){
     text_color(p,str,x,y,limit,1,1,1);
@@ -937,6 +998,27 @@ static void button(Paint *p,const char *label,int x,int y,int w,int h,int primar
 /* Solid vector polygons for crisp icons, independent of font glyph support. */
 static void polygon(Paint *p,const float *points,int count,float r,float g,float b){
     if(count<3 || count>60)return;
+    if(ui_theme_enabled && ui_light_theme){r=1.f-r;g=1.f-g;b=1.f-b;}
+#ifdef __PS4__
+    if(ps4_ui_renderer){
+        SDL_Vertex vertices[61];
+        int indices[60*3];
+        SDL_Color color={color_byte(r),color_byte(g),color_byte(b),255};
+        SDL_FPoint center={0.f,0.f};
+        for(int i=0;i<count;i++){
+            SDL_FPoint point={points[2*i],points[2*i+1]};
+            vertices[i+1]=(SDL_Vertex){point,color,{0.f,0.f}};
+            center.x+=point.x/count;
+            center.y+=point.y/count;
+            indices[3*i]=0;
+            indices[3*i+1]=i+1;
+            indices[3*i+2]=(i+1)%count+1;
+        }
+        vertices[0]=(SDL_Vertex){center,color,{0.f,0.f}};
+        SDL_RenderGeometry(ps4_ui_renderer,NULL,vertices,count+1,indices,count*3);
+        return;
+    }
+#endif
     float vertices[(60+2)*4];
     float cx=0,cy=0;
     for(int i=0;i<count;i++){cx+=points[2*i];cy+=points[2*i+1];}
@@ -949,7 +1031,6 @@ static void polygon(Paint *p,const float *points,int count,float r,float g,float
         vertices[(i+1)*4+1]=1.f-points[j*2+1]/360.f;
         vertices[(i+1)*4+2]=vertices[(i+1)*4+3]=.5f;
     }
-    if(ui_theme_enabled && ui_light_theme){r=1.f-r;g=1.f-g;b=1.f-b;}
     glUseProgram(p->program);
     glUniform4f(p->tint,r,g,b,1.f);
     glUniform3f(p->shape,100.f,100.f,0.f);
@@ -1085,13 +1166,13 @@ static void footer(Paint *p,const char *message) {
     }
 }
 static void poster(Paint *p,const Movie *movie,int x,int y,int width,int height,int *budget) {
-    GLuint image=poster_texture(movie,budget);
+    UiTexture image=poster_texture(movie,budget);
     if(!image) {
         box(p,x,y,width,height,.15f,.19f,.23f);
         text(p,"UAPLAY",x+12,y+height/2-15,width-25);
         return;
     }
-    GLuint previous=p->tex;
+    UiTexture previous=p->tex;
     p->tex=image;
     box(p,x,y,width,height,1,1,1);
     p->tex=previous;
@@ -1106,9 +1187,15 @@ static void poster(Paint *p,const Movie *movie,int x,int y,int width,int height,
 }
 static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
                  Source *sources,int sn,int source,const char *heading,const char *status) {
-    glViewport(0,0,1280,720);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+#ifdef __PS4__
+    if(!ps4_ui_renderer){
+#endif
+        glViewport(0,0,1280,720);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+#ifdef __PS4__
+    }
+#endif
     ui_theme_enabled=1;
     ui_gradient_pass=1;
     box_alpha(p,0,0,1280,720,.034f,.042f,.054f,1.f,0);
@@ -1615,29 +1702,93 @@ static int keyboard(char *value,size_t size) {
     return R_SUCCEEDED(result) && value[0];
 #endif
 }
+static int open_player(mpv_handle **handle,mpv_render_context **render){
+    if(*render)return 1;
+#ifdef __PS4__
+    if(ps4_ui_renderer)return 0;
+#endif
+    mpv_handle *player=mpv_create();
+    if(!player)return 0;
+    mpv_set_option_string(player,"vo","libmpv");
+#ifdef __PS4__
+    mpv_set_option_string(player,"hwdec","no");
+#else
+    mpv_set_option_string(player,"hwdec","auto-safe");
+#endif
+    mpv_set_option_string(player,"terminal","no");
+    mpv_set_option_string(player,"network-timeout","20");
+    mpv_set_option_string(player,"sub-visibility","yes");
+    mpv_set_option_string(player,"sub-auto","fuzzy");
+    mpv_set_option_string(player,"cache","yes");
+    mpv_set_option_string(player,"demuxer-max-bytes","16MiB");
+    mpv_set_option_string(player,"demuxer-max-back-bytes","2MiB");
+    mpv_set_option_string(player,"video-sync","audio");
+    mpv_request_log_messages(player,"warn");
+    int result=mpv_initialize(player);
+    if(result>=0){
+        mpv_opengl_init_params gl_init={.get_proc_address=proc};
+        mpv_render_param init[]={{MPV_RENDER_PARAM_API_TYPE,MPV_RENDER_API_TYPE_OPENGL},
+                                {MPV_RENDER_PARAM_OPENGL_INIT_PARAMS,&gl_init},
+                                {MPV_RENDER_PARAM_INVALID,NULL}};
+        result=mpv_render_context_create(render,player,init);
+    }
+    if(result<0){
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"mpv: %s",mpv_error_string(result));
+        mpv_terminate_destroy(player);
+        return 0;
+    }
+    *handle=player;
+    return 1;
+}
+
+static void present_ui(SDL_Window *window){
+#ifdef __PS4__
+    if(ps4_ui_renderer){
+        SDL_RenderPresent(ps4_ui_renderer);
+        return;
+    }
+#endif
+    SDL_GL_SwapWindow(window);
+}
+
 int main(void) {
 #if defined(__PS5__) || defined(__PS4__)
     fprintf(stderr,"[UAPlay] native console SDL UI booting (no browser host)\n");
     SDL_SetMainReady();
-    chdir("/app0");
     mkdir(UAPLAY_DATA_ROOT,0777);
+#ifdef __PS4__
+    FILE *boot_log=fopen(UAPLAY_DATA_ROOT "/boot.log","w");
+    if(boot_log)fclose(boot_log);
+    ps4_boot_log("Initializing SDL video",NULL);
+#else
+    chdir("/app0");
     mkdir(UAPLAY_CATALOG_DIR,0777);
     curl_global_init(CURL_GLOBAL_DEFAULT);
+#endif
 #else
     romfsInit();
 #endif
+#ifndef __PS4__
     library_init();
     theme_load();
+#endif
 #ifdef __SWITCH__
     Result network_result = socketInitializeDefault();
     if (R_SUCCEEDED(network_result)) curl_global_init(CURL_GLOBAL_DEFAULT);
 #endif
     SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS,"1");
+#ifdef __PS4__
+    if(SDL_Init(SDL_INIT_VIDEO)){
+        ps4_boot_log("SDL_Init video failed",SDL_GetError());
+        return 1;
+    }
+#else
     if(SDL_Init(SDL_INIT_VIDEO|SDL_INIT_GAMECONTROLLER|SDL_INIT_AUDIO)) {
         fprintf(stderr,"[UAPlay] SDL_Init failed: %s\n",SDL_GetError());
         return 1;
     }
     catalog_http_init();
+#endif
 #ifdef __PS5__
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK,SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION,3);
@@ -1651,58 +1802,108 @@ int main(void) {
 #endif
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION,0);
 #endif
+#ifdef __PS4__
+    ps4_boot_log("Creating EGL window",NULL);
+#endif
     SDL_Window *window=SDL_CreateWindow("UAPlay",0,0,1280,720,SDL_WINDOW_OPENGL|SDL_WINDOW_SHOWN);
     if(!window) {
+#ifdef __PS4__
+        ps4_boot_log("SDL_CreateWindow failed",SDL_GetError());
+#else
         fprintf(stderr,"[UAPlay] SDL_CreateWindow failed: %s\n",SDL_GetError());
+#endif
         SDL_Quit();return 2;
     }
-    SDL_GLContext gl=SDL_GL_CreateContext(window);
-    if(!gl) {
-        fprintf(stderr,"[UAPlay] SDL_GL_CreateContext failed: %s\n",SDL_GetError());
-        SDL_DestroyWindow(window);SDL_Quit();return 3;
+    SDL_GLContext gl=NULL;
+#ifdef __PS4__
+    if(!PS4_PigletShaccAvailable()){
+        ps4_boot_log("Creating SDL renderer with embedded Piglet shaders",NULL);
+        ps4_ui_renderer=SDL_CreateRenderer(window,-1,SDL_RENDERER_ACCELERATED);
+        if(!ps4_ui_renderer ||
+           SDL_RenderSetLogicalSize(ps4_ui_renderer,1280,720)<0 ||
+           SDL_SetRenderDrawBlendMode(ps4_ui_renderer,SDL_BLENDMODE_BLEND)<0){
+            ps4_boot_log("SDL renderer setup failed",SDL_GetError());
+            if(ps4_ui_renderer)SDL_DestroyRenderer(ps4_ui_renderer);
+            SDL_DestroyWindow(window);SDL_Quit();return 3;
+        }
+    }else
+#endif
+    {
+        gl=SDL_GL_CreateContext(window);
+        if(!gl){
+#ifdef __PS4__
+            ps4_boot_log("SDL_GL_CreateContext failed",SDL_GetError());
+#else
+            fprintf(stderr,"[UAPlay] SDL_GL_CreateContext failed: %s\n",SDL_GetError());
+#endif
+            SDL_DestroyWindow(window);SDL_Quit();return 3;
+        }
     }
     Paint paint={0};
-    if(!paint_init(&paint)) {
+    int exit_code=0;
+    if(!paint_init(&paint)){
+#ifdef __PS4__
+        ps4_boot_log("UI renderer or font setup failed",SDL_GetError());
+#else
         fprintf(stderr,"[UAPlay] UI renderer or fonts failed to initialize\n");
-        goto cleanup;
+#endif
+        exit_code=4;
+        goto cleanup_paint;
+    }
+#ifdef __PS4__
+    library_init();
+    theme_load();
+    draw(&paint,CATALOG,NULL,0,0,NULL,0,0,home_headings[0],"Завантаження каталогу...");
+    present_ui(window);
+    ps4_boot_log("First UI frame submitted",NULL);
+    if(SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER)<0)
+        ps4_boot_log("Controller initialization failed",SDL_GetError());
+    if(SDL_InitSubSystem(SDL_INIT_AUDIO)<0)
+        ps4_boot_log("Audio initialization failed",SDL_GetError());
+    CURLcode curl_status=curl_global_init(CURL_GLOBAL_DEFAULT);
+    if(curl_status!=CURLE_OK){
+        ps4_boot_log("curl initialization failed",curl_easy_strerror(curl_status));
+        exit_code=5;
+        goto cleanup_paint;
+    }
+    catalog_http_init();
+#endif
+    int movie_capacity=CATALOG_LOCAL_MAX;
+    Movie *movies=calloc((size_t)movie_capacity,sizeof(Movie));
+    if(!movies){
+        catalog_http_cleanup();
+#ifdef __PS4__
+        curl_global_cleanup();
+#endif
+        exit_code=6;
+        goto cleanup_paint;
     }
     posters_init();
     SDL_GameController *pad=NULL;
     for(int i=0;i<SDL_NumJoysticks();i++)
         if(SDL_IsGameController(i)){pad=SDL_GameControllerOpen(i);break;}
-    mpv_handle *player=mpv_create();
+    mpv_handle *player=NULL;
     mpv_render_context *render=NULL;
-    if(player){
-        mpv_set_option_string(player,"vo","libmpv");
-        mpv_set_option_string(player,"hwdec","auto-safe");
-        mpv_set_option_string(player,"terminal","no");
-        mpv_set_option_string(player,"network-timeout","20");
-        mpv_set_option_string(player,"sub-visibility","yes");
-        mpv_set_option_string(player,"sub-auto","fuzzy");
-        mpv_set_option_string(player,"cache","yes");
-        /* Retain enough buffering for high bitrate streams while constraining
-           old frames that remain in the back-buffer after seeking. */
-        mpv_set_option_string(player,"demuxer-max-bytes","16MiB");
-        mpv_set_option_string(player,"demuxer-max-back-bytes","2MiB");
-        mpv_set_option_string(player,"video-sync","audio");
-        mpv_request_log_messages(player,"warn");
-        if(mpv_initialize(player)>=0){
-            mpv_opengl_init_params gl_init={.get_proc_address=proc};
-            mpv_render_param init[]={{MPV_RENDER_PARAM_API_TYPE,MPV_RENDER_API_TYPE_OPENGL},
-                                    {MPV_RENDER_PARAM_OPENGL_INIT_PARAMS,&gl_init},
-                                    {MPV_RENDER_PARAM_INVALID,NULL}};
-            mpv_render_context_create(&render,player,init);
-        }
-    }
-    int movie_capacity=CATALOG_LOCAL_MAX;
-    Movie *movies=calloc((size_t)movie_capacity,sizeof(Movie));
-    if(!movies)goto cleanup;
+#ifndef __PS4__
+    open_player(&player,&render);
+#endif
     Source sources[UAKINO_MAX]={0};
     int n=0,sn=0,chosen=0,source=0,category=0,running=1;
     Page page=CATALOG;
     char query[192]={0},message[256]={0};
     catalog_loader_init();
+#ifdef __PS4__
+    if(catalog_loader.thread){
+        SDL_LockMutex(catalog_loader.mutex);
+        for(int i=0;i<HOME_SHELF_COUNT;i++)home_shelves[i].state=1;
+        home_cache_initialized=1;
+        SDL_CondSignal(catalog_loader.cond);
+        SDL_UnlockMutex(catalog_loader.mutex);
+        snprintf(message,sizeof(message),"Завантаження каталогу...");
+    }else snprintf(message,sizeof(message),"Не вдалося запустити завантаження каталогу");
+#else
     n=load_category(category,query,movies,message,sizeof(message));
+#endif
     Movie playing_movie={0};
     double resume_at=0;
     char pending_subtitle[1024]={0};
@@ -2119,7 +2320,7 @@ int main(void) {
                    selected_episode<episodes_in_season(season_ids[selected_season])-1)selected_episode++;
                 if(key==SDL_CONTROLLER_BUTTON_A){
                     Episode *episode=selected_episode_item();
-                    if(episode && render){
+                    if(episode && open_player(&player,&render)){
                         Source episode_source={0};
                         snprintf(episode_source.url,sizeof(episode_source.url),"%s",episode->url);
                         char url[2048]={0};message[0]=0;
@@ -2436,7 +2637,7 @@ int main(void) {
                     }
                     char url[2048]={0};
                     message[0]=0;
-                    if(!render){
+                    if(!open_player(&player,&render)){
                         snprintf(message,sizeof(message),"Відеоплеєр не ініціалізовано");
                     }else if(uakino_resolve(&sources[source],url,sizeof(url),message,sizeof(message))){
                         snprintf(pending_subtitle,sizeof(pending_subtitle),"%s",uakino_resolved_subtitle());
@@ -2626,7 +2827,7 @@ int main(void) {
                 posters_prefetch(movies,n,start,expanded_catalog?18:12);
             }
         }
-        SDL_GL_SwapWindow(window);
+        present_ui(window);
         /* Do not stack a fixed sleep on top of the time that Eden/Switch
            already spent drawing or waiting for VSync. */
         Uint32 frame_elapsed=SDL_GetTicks()-frame_started_at;
@@ -2643,6 +2844,10 @@ int main(void) {
     if(pad)SDL_GameControllerClose(pad);
     posters_destroy();
     catalog_http_cleanup();
+#ifdef __PS4__
+    curl_global_cleanup();
+#endif
+cleanup_paint:
     text_cache_destroy();
     for(int i=0;i<7;i++){
         if(paint.scripts[i])TTF_CloseFont(paint.scripts[i]);
@@ -2653,21 +2858,24 @@ int main(void) {
     if(paint.font_tiny)TTF_CloseFont(paint.font_tiny);
     if(paint.font_small)TTF_CloseFont(paint.font_small);
     if(paint.font_big)TTF_CloseFont(paint.font_big);
-    TTF_CloseFont(paint.font);TTF_Quit();
-    glDeleteTextures(1,&paint.tex);
-    glDeleteBuffers(1,&paint.vbo);
-    glDeleteProgram(paint.program);
+    if(paint.font)TTF_CloseFont(paint.font);
+    if(TTF_WasInit())TTF_Quit();
+    if(paint.tex)ui_texture_destroy(paint.tex);
+    if(paint.vbo)glDeleteBuffers(1,&paint.vbo);
+    if(paint.program)glDeleteProgram(paint.program);
 #ifdef __PS5__
     glDeleteVertexArrays(1,&paint.vao);
 #endif
-cleanup:
-    SDL_GL_DeleteContext(gl);
+#ifdef __PS4__
+    if(ps4_ui_renderer)SDL_DestroyRenderer(ps4_ui_renderer);
+#endif
+    if(gl)SDL_GL_DeleteContext(gl);
     SDL_DestroyWindow(window);SDL_Quit();
-#if defined(__PS5__) || defined(__PS4__)
+#ifdef __PS5__
     curl_global_cleanup();
-#else
+#elif !defined(__PS4__)
     romfsExit();
     if (R_SUCCEEDED(network_result)) { curl_global_cleanup(); socketExit(); }
 #endif
-    return 0;
+    return exit_code;
 }

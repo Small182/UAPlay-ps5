@@ -8,11 +8,23 @@
 #include <GLES2/gl2.h>
 #endif
 #include "catalog.h"
+#include <SDL.h>
+
+#ifdef __PS4__
+#include <stdint.h>
+typedef uintptr_t UiTexture;
+extern SDL_Renderer *ps4_ui_renderer;
+#else
+typedef GLuint UiTexture;
+#endif
+
+UiTexture ui_texture_create(SDL_Surface *rgba);
+void ui_texture_destroy(UiTexture texture);
 
 /* Start the background image downloader after SDL and curl initialization. */
 void posters_init(void);
 /* Returns cached texture or zero while the background download is pending. */
-GLuint poster_texture(const Movie *movie, int *network_budget);
+UiTexture poster_texture(const Movie *movie, int *network_budget);
 /* Begin fetching the currently visible cards and the next few cards. */
 void posters_prefetch(const Movie *movies, int count, int start, int ahead);
 void posters_destroy(void);

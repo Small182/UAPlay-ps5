@@ -256,13 +256,7 @@ static char *read_offline_catalog(const char *category) {
     const char *name = !strcmp(category, "series") ? "series" :
                        !strcmp(category, "top") ? "top" : "movies";
     char path[80];
-    snprintf(path, sizeof(path), "%s%s.json",
-#if defined(__PS5__) || defined(__PS4__)
-             "romfs/",
-#else
-             "romfs:/",
-#endif
-             name);
+    snprintf(path, sizeof(path), UAPLAY_ASSET("%s.json"), name);
     FILE *file = fopen(path, "rb");
     if (!file) return NULL;
     if (fseek(file, 0, SEEK_END)) { fclose(file); return NULL; }

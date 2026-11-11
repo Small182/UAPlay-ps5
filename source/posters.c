@@ -31,7 +31,7 @@
 
 typedef struct {
     int id;
-    GLuint texture;
+    UiTexture texture;
     Uint32 retry_after;
     unsigned long long last_used;
 } PosterEntry;
@@ -212,7 +212,7 @@ void posters_init(void){
     }
 }
 
-static GLuint image_texture(const ImageData *data){
+static UiTexture image_texture(const ImageData *data){
     if(!data->data || !data->used)return 0;
     SDL_RWops *rw=SDL_RWFromConstMem(data->data,(int)data->used);
     SDL_Surface *image=rw?IMG_Load_RW(rw,1):NULL;
@@ -220,6 +220,19 @@ static GLuint image_texture(const ImageData *data){
     SDL_Surface *rgba=SDL_ConvertSurfaceFormat(image,SDL_PIXELFORMAT_ABGR8888,0);
     SDL_FreeSurface(image);
     if(!rgba)return 0;
+    UiTexture texture=ui_texture_create(rgba);
+    SDL_FreeSurface(rgba);
+    return texture;
+}
+
+UiTexture ui_texture_create(SDL_Surface *rgba){
+#ifdef __PS4__
+    if(ps4_ui_renderer){
+        SDL_Texture *texture=SDL_CreateTextureFromSurface(ps4_ui_renderer,rgba);
+        if(texture)SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);
+        return (UiTexture)texture;
+    }
+#endif
     GLuint texture=0;
     glGenTextures(1,&texture);
     if(texture){
@@ -231,17 +244,28 @@ static GLuint image_texture(const ImageData *data){
         glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,rgba->w,rgba->h,
                      0,GL_RGBA,GL_UNSIGNED_BYTE,rgba->pixels);
     }
-    SDL_FreeSurface(rgba);
     return texture;
 }
 
-static void cache_store(int id,GLuint texture){
+void ui_texture_destroy(UiTexture texture){
+    if(!texture)return;
+#ifdef __PS4__
+    if(ps4_ui_renderer){
+        SDL_DestroyTexture((SDL_Texture *)texture);
+        return;
+    }
+#endif
+    GLuint gl_texture=(GLuint)texture;
+    glDeleteTextures(1,&gl_texture);
+}
+
+static void cache_store(int id,UiTexture texture){
     int slot=used;
     if(used==POSTER_CACHE_MAX){
         slot=0;
         for(int i=1;i<used;i++)
             if(cache[i].last_used<cache[slot].last_used)slot=i;
-        if(cache[slot].texture)glDeleteTextures(1,&cache[slot].texture);
+        ui_texture_destroy(cache[slot].texture);
     }else used++;
     cache[slot].id=id;
     cache[slot].texture=texture;
@@ -260,7 +284,7 @@ static void collect_completed(void){
         task->completed_image=(ImageData){0};
         task->ready=0;
         SDL_UnlockMutex(task->mutex);
-        GLuint texture=image_texture(&image);
+        UiTexture texture=image_texture(&image);
         free(image.data);
         /* A failed request is remembered to prevent a network retry loop. */
         cache_store(id,texture);
@@ -312,7 +336,7 @@ static int request_poster(const Movie *movie){
     return 0;
 }
 
-GLuint poster_texture(const Movie *movie,int *budget){
+UiTexture poster_texture(const Movie *movie,int *budget){
     if(!movie || !movie->poster[0] || !strcmp(movie->poster,"null"))return 0;
     collect_completed();
     int identity=movie->series?-movie->id:movie->id;
@@ -361,6 +385,6 @@ void posters_destroy(void){
     if(disk_mutex)SDL_DestroyMutex(disk_mutex);
     disk_mutex=NULL;
     for(int i=0;i<used;i++)
-        if(cache[i].texture)glDeleteTextures(1,&cache[i].texture);
+        ui_texture_destroy(cache[i].texture);
     used=0;cache_clock=0;
 }

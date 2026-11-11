@@ -14,7 +14,7 @@
 #define UAPLAY_CATALOG_DIR UAPLAY_DATA_ROOT
 #define UAPLAY_LIBRARY_DIR UAPLAY_DATA_ROOT "/library"
 #define UAPLAY_POSTER_DIR UAPLAY_DATA_ROOT "/posters"
-#define UAPLAY_ASSET(file) "romfs/" file
+#define UAPLAY_ASSET(file) "/app0/romfs/" file
 #else
 #define UAPLAY_DATA_ROOT "sdmc:/switch"
 #define UAPLAY_CATALOG_DIR "sdmc:/switch/uaplay"
