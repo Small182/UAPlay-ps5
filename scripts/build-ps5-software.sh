@@ -45,6 +45,19 @@ python3 "$project/scripts/patch-ps5-linker.py" "$app/tools/build.sh"
 (
     cd "$app"
     make init TITLE_ID=PPSA99283 APP_NAME='UAPlay PS5' APP_CATEGORY=media
+    # The media title must use the console's page-table defaults. The template
+    # supplies 256 MiB, which the kernel rejects before eboot starts on 13.60.
+    python3 - sce_sys/param.json <<'PY'
+import json
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+metadata = json.loads(path.read_text(encoding="utf-8"))
+metadata.pop("kernel", None)
+metadata["contentVersion"] = "01.000.011"
+path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PY
     make libc
     APP_DEFINITIONS='__PS5__ SDL_MAIN_HANDLED UAPLAY_PS5_SOFTWARE' \
     PACBREW_PACKAGES='sdl2 SDL2_ttf SDL2_image libcurl SDL_kitchensink libavformat libavcodec libavutil libswscale libswresample libass' \
