@@ -44,7 +44,10 @@ if(NOT CFLAGS_OK EQUAL 0 OR NOT LIBS_OK EQUAL 0)
 endif()
 separate_arguments(PACKAGE_CFLAGS NATIVE_COMMAND "${PACKAGE_CFLAGS}")
 separate_arguments(PACKAGE_LIBS NATIVE_COMMAND "${PACKAGE_LIBS}")
-list(REMOVE_ITEM PACKAGE_LIBS "-pthread" "-lpthread")
+# PacBrew's CMake link rule runs ld.lld directly, not clang. The -Xlinker
+# compiler-driver wrapper is therefore invalid; pass its following option
+# straight through to ld.lld instead.
+list(REMOVE_ITEM PACKAGE_LIBS "-pthread" "-lpthread" "-Xlinker")
 target_compile_options(uaplay_ps4 PRIVATE ${PACKAGE_CFLAGS})
 target_link_libraries(uaplay_ps4 PRIVATE
     ${PACKAGE_LIBS} curl
