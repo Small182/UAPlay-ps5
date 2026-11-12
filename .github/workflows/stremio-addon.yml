@@ -1,0 +1,45 @@
+name: UAPlay Stremio addon (Linux bridge and protocol tests)
+on:
+  push:
+    paths:
+      - 'stremio-addon/**'
+      - '.github/workflows/stremio-addon.yml'
+  pull_request:
+    paths:
+      - 'stremio-addon/**'
+      - '.github/workflows/stremio-addon.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test-and-build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: Small182/UAPlay-nx
+          ref: 21b87a3673cd63eb4c11301d62380a6fa7b38cd8
+          path: upstream
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
+      - name: Compile the real UAPlay search and resolve engine on Linux
+        run: |
+          mkdir -p stremio-addon/bin
+          cc -O2 -std=c11 -Wall -Wextra -D_POSIX_C_SOURCE=200809L \
+            -Iupstream/source stremio-addon/native/uaplay_bridge.c upstream/source/catalog.c \
+            $(pkg-config --cflags --libs libcurl) -o stremio-addon/bin/uaplay_bridge
+      - name: Verify Stremio manifest, IMDb ID routing and stream responses
+        run: node --test stremio-addon/tests/*.test.js
+      - name: Verify the native CLI rejects incorrect arguments
+        run: |
+          if stremio-addon/bin/uaplay_bridge invalid; then
+            echo 'Invalid input was accepted' >&2
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uaplay-stremio-linux-bridge
+          path: stremio-addon/bin/uaplay_bridge
