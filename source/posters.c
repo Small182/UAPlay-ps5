@@ -7,6 +7,9 @@
 #include <GL/glcorearb.h>
 #endif
 #include <curl/curl.h>
+#ifdef __PS5__
+#include "console_curl.h"
+#endif
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -132,6 +135,9 @@ static ImageData download_image(const char *path,CURL *curl,int *ssl_failed){
     /* Reset request-specific options but preserve the handle's persistent
        TCP/TLS connection pool and TLS session cache across poster requests. */
     curl_easy_reset(curl);
+#ifdef __PS5__
+    console_curl_setup(curl);
+#endif
     curl_easy_setopt(curl,CURLOPT_URL,url);
 #ifdef __PS5__
     /* Verify HTTPS using the bundled public Mozilla roots. */
