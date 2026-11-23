@@ -3016,13 +3016,36 @@ int main(void) {
                         selected_video_option=slot;
                         key=tx<640?SDL_CONTROLLER_BUTTON_DPAD_LEFT:SDL_CONTROLLER_BUTTON_DPAD_RIGHT;
                     }else if(ty<92 && tx<100)key=SDL_CONTROLLER_BUTTON_B;
-                }else if(page==SETTINGS){
-                    if(tx>=32 && tx<449 && ty>=120 && ty<588 && (ty-120)%78<72){
-                        settings_selected=(ty-120)/78;
-                        if(settings_selected>=6)settings_selected=5;
-                        key=SDL_CONTROLLER_BUTTON_A;
+                }else if(page==SETTINGS || page==APPEARANCE){
+                    if(tx>=32 && tx<449 && ty>=SETTINGS_Y &&
+                       ty<SETTINGS_Y+SETTING_COUNT*SETTINGS_ROW_STEP){
+                        int row=(ty-SETTINGS_Y)/SETTINGS_ROW_STEP;
+                        if((ty-SETTINGS_Y)%SETTINGS_ROW_STEP<SETTINGS_ROW_HEIGHT){
+                            if(page==SETTINGS)settings_selected=row;
+                            else appearance_selected=row;
+                            key=SDL_CONTROLLER_BUTTON_A;
+                        }
                     }else if(ty>=537 && ty<592 && tx>=515 && tx<773)key=SDL_CONTROLLER_BUTTON_A;
                     else if(ty<92 && tx<100)key=SDL_CONTROLLER_BUTTON_B;
+                }else if(page==ACCENT_PALETTE){
+                    if(tx>=ACCENT_GRID_X && ty>=ACCENT_GRID_Y){
+                        int c=(tx-ACCENT_GRID_X)/ACCENT_STEP_X;
+                        int r=(ty-ACCENT_GRID_Y)/ACCENT_STEP_Y;
+                        int index=r*ACCENT_COLS+c;
+                        if(c>=0 && c<ACCENT_COLS && r>=0 && index<ACCENT_VISIBLE_COUNT){
+                            accent_selected=index;key=SDL_CONTROLLER_BUTTON_A;
+                        }
+                    }else if(ty<92 && tx<100)key=SDL_CONTROLLER_BUTTON_B;
+                }else if(page==PROVIDER_SETTINGS || page==PROVIDERS){
+                    if(tx>=32 && tx<1248 && ty>=UI_ROW_Y){
+                        int row=(ty-UI_ROW_Y)/UI_ROW_STEP;
+                        if(row>=0 && row<PROVIDER_COUNT && (ty-UI_ROW_Y)%UI_ROW_STEP<UI_ROW_HEIGHT &&
+                           (page==PROVIDER_SETTINGS || provider_for_row(row)>=0)){
+                            if(page==PROVIDER_SETTINGS)provider_settings_selected=row;
+                            else selected_provider=row;
+                            key=SDL_CONTROLLER_BUTTON_A;
+                        }
+                    }else if(ty<92 && tx<100)key=SDL_CONTROLLER_BUTTON_B;
                 }
             }
             if(page==PLAYER && key>=0)controls_until=SDL_GetTicks()+3000;
@@ -3772,15 +3795,33 @@ int main(void) {
                         snprintf(message,sizeof(message),"%s",library_favorite(&movies[chosen])?
                                  "Додано у вибране":"Видалено з вибраного");
                     }else{
+                        selected_provider=0;
                         message[0]=0;
-                        sn=uakino_search(&movies[chosen],sources,UAKINO_MAX,message,sizeof(message));
-                        sn=catalog_rank_sources(&movies[chosen],sources,sn,source_mode);
-                        if(!sn)snprintf(message,sizeof(message),"Нічого не знайдено");
-                        source=0;page=SOURCES;
+                        page=PROVIDERS;
                     }
                 }
+            }else if(page==PROVIDERS){
+                if(key==SDL_CONTROLLER_BUTTON_B || key==SDL_CONTROLLER_BUTTON_BACK){page=DETAILS;message[0]=0;}
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_UP && selected_provider>0)
+                    selected_provider--;
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN && provider_for_row(selected_provider+1)>=0)
+                    selected_provider++;
+                if(key==SDL_CONTROLLER_BUTTON_A){
+                    int provider=provider_for_row(selected_provider);
+                    if(provider<0)continue;
+                    message[0]=0;
+                    Movie lookup=movies[chosen];
+                    if(provider!=UAKINO_PROVIDER_MOVY)
+                        catalog_use_ukrainian_search_title(&lookup);
+                    sn=uakino_search_provider(&lookup,sources,UAKINO_MAX,
+                                              provider,message,sizeof(message));
+                    sn=catalog_rank_sources(&lookup,sources,sn,source_mode);
+                    if(!sn && (!message[0] || provider!=UAKINO_PROVIDER_MOVY))
+                        snprintf(message,sizeof(message),TR("Нічого не знайдено","No results found"));
+                    source=0;page=SOURCES;
+                }
             }else if(page==SOURCES){
-                if(key==SDL_CONTROLLER_BUTTON_B){page=DETAILS;message[0]=0;}
+                if(key==SDL_CONTROLLER_BUTTON_B){page=PROVIDERS;message[0]=0;}
                 if(key==SDL_CONTROLLER_BUTTON_DPAD_UP && source>0)source--;
                 if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN && source<sn-1)source++;
                 if(key==SDL_CONTROLLER_BUTTON_X && sn && !movies[chosen].series){
