@@ -30,6 +30,8 @@ mv "$app/src" "$app/src-base"
 mkdir -p "$app/src/runtime" "$app/ps5"
 cp -a "$app/src-base/runtime/." "$app/src/runtime/"
 cp "$project"/source/*.c "$project"/source/*.h "$app/src/"
+# IPTV country metadata is a C include consumed by iptv.c.
+cp "$project"/source/*.inc "$app/src/"
 cp "$project/ps5/kitchensink_mpv.c" "$app/src/kitchensink_mpv.c"
 cp "$project/ps5/posix_compat.c" "$app/src/posix_compat.c"
 cp "$project/ps5/kitchensink_mpv.h" "$project/ps5/native_display.h" "$app/ps5/"
