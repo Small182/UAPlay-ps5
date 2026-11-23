@@ -231,6 +231,15 @@ static char *request_form(const char *url, const char *post_data,
 #endif
     curl_slist_free_all(headers);
     if (result != CURLE_OK || status < 200 || status >= 300) {
+#ifdef __PS5__
+        /* Diagnostic codes only: never write a URL containing a TMDb key or
+           video authorization token to persistent console storage. */
+        FILE *diag=fopen(UAPLAY_DATA_DIR "/network.log","a");
+        if(diag){
+            fprintf(diag,"catalog HTTPS: curl=%d HTTP=%ld\n",(int)result,status);
+            fclose(diag);
+        }
+#endif
         if (result == CURLE_OK)
             snprintf(error, error_size, TR("Сервер відповів HTTP %ld","Server returned HTTP %ld"), status);
         else snprintf(error, error_size, "HTTP %ld: %s", status, curl_easy_strerror(result));
