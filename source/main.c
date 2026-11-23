@@ -2149,7 +2149,7 @@ static int keyboard(char *value,size_t size) {
         }
         text_muted(p,uk_mode?"Розкладка: УК (ЙЦУКЕН)":"Розкладка: EN (QWERTY)",
                    100,598,700);
-        text_muted(p,"X — вибрати   □ — стерти   △ — мова   O — назад",100,635,1060);
+        text_muted(p,"X — вибрати   [] — стерти   ^ — мова   O — назад",100,635,1060);
         present_ui(keyboard_window);
         SDL_Delay(16);
     }
