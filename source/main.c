@@ -1781,6 +1781,36 @@ static void change_volume(mpv_handle *player,int direction){
     video_options[1]=volume;
     playback_set_value(player,"volume",volume);
 }
+
+#ifdef UAPLAY_PS5_SOFTWARE
+static Uint32 ps5_stick_hud_at=0,ps5_right_last_at=0;
+static int ps5_stick_hud_kind=0,ps5_right_last_direction=0;
+static void ps5_player_right_stick(SDL_GameController *pad,mpv_handle *player){
+    if(!pad || !SDL_GameControllerGetAttached(pad))return;
+    int x=SDL_GameControllerGetAxis(pad,SDL_CONTROLLER_AXIS_RIGHTX);
+    int y=SDL_GameControllerGetAxis(pad,SDL_CONTROLLER_AXIS_RIGHTY);
+    int direction=0;
+    if(abs(x)>19000 || abs(y)>19000)
+        direction=abs(y)>=abs(x)?(y<0?1:2):(x<0?3:4);
+    if(!direction){ps5_right_last_direction=0;return;}
+    Uint32 now=SDL_GetTicks();
+    if(direction==ps5_right_last_direction && now-ps5_right_last_at<175u)return;
+    ps5_right_last_direction=direction;ps5_right_last_at=now;
+    if(direction>=3){
+        change_volume(player,direction==4?1:-1);
+        ps5_stick_hud_kind=2;
+    }else{
+        /* The TV backlight is external to PS5. Brightness changes the video
+           picture itself, preserving the right-stick Switch shortcut. */
+        video_options[2]+=direction==1?5.0:-5.0;
+        if(video_options[2]>100)video_options[2]=100;
+        if(video_options[2]< -100)video_options[2]=-100;
+        ps5_stick_hud_kind=1;
+    }
+    ps5_stick_hud_at=now;
+}
+#endif
+
 static void draw_player_controls(Paint *p,mpv_handle *player) {
     ui_theme_enabled=0; /* Video playback controls remain readable in both themes. */
     double pos=0,duration=0;
@@ -1874,7 +1904,8 @@ static int native_button(int button) {
     }
 #endif
 }
-static void stick_arrow(SDL_GameController *pad,Uint32 *last_time,int *last_key) {
+static void stick_arrow(SDL_GameController *pad,int player_mode,
+                         Uint32 *last_time,int *last_key) {
     if(!pad || !SDL_GameControllerGetAttached(pad))return;
     const int deadzone=19000;
     int lx=SDL_GameControllerGetAxis(pad,SDL_CONTROLLER_AXIS_LEFTX);
@@ -1883,16 +1914,21 @@ static void stick_arrow(SDL_GameController *pad,Uint32 *last_time,int *last_key)
     int ry=SDL_GameControllerGetAxis(pad,SDL_CONTROLLER_AXIS_RIGHTY);
     int key=0;
     if(abs(ly)>deadzone || abs(lx)>deadzone)
-        key=abs(ly)>=abs(lx)?(ly>0?SDLK_DOWN:SDLK_UP):(lx>0?SDLK_RIGHT:SDLK_LEFT);
-    else if(abs(ry)>deadzone || abs(rx)>deadzone)
-        key=abs(ry)>=abs(rx)?(ry>0?SDLK_DOWN:SDLK_UP):(rx>0?SDLK_RIGHT:SDLK_LEFT);
+        key=abs(ly)>=abs(lx)?(player_mode?(ly>0?SDLK_PAGEDOWN:SDLK_PAGEUP):
+                                         (ly>0?SDLK_DOWN:SDLK_UP)):
+                              (lx>0?SDLK_RIGHT:SDLK_LEFT);
+    else if(!player_mode && (abs(ry)>deadzone || abs(rx)>deadzone))
+        key=abs(ry)>=abs(rx)?(ry>0?SDLK_DOWN:SDLK_UP):
+                              (rx>0?SDLK_RIGHT:SDLK_LEFT);
     Uint32 now=SDL_GetTicks();
     if(!key){*last_key=0;return;}
-    if(key==*last_key && now-*last_time<175)return;
+    Uint32 interval=(key==SDLK_PAGEUP || key==SDLK_PAGEDOWN)?500u:175u;
+    if(key==*last_key && now-*last_time<interval)return;
     *last_key=key;*last_time=now;
     SDL_Event event={0};event.type=SDL_KEYDOWN;event.key.keysym.sym=key;
     SDL_PushEvent(&event);
 }
+
 static void configure_stream(mpv_handle *player,const char *url) {
     if(!player)return;
 #ifdef __PS5__
@@ -1945,6 +1981,8 @@ static int keyboard(char *value,size_t size) {
                     case SDLK_BACKSPACE:key=SDL_CONTROLLER_BUTTON_B;break;
                     case SDLK_UP:key=SDL_CONTROLLER_BUTTON_DPAD_UP;break;
                     case SDLK_DOWN:key=SDL_CONTROLLER_BUTTON_DPAD_DOWN;break;
+                    case SDLK_PAGEUP:key=10001;break;
+                    case SDLK_PAGEDOWN:key=10002;break;
                     case SDLK_LEFT:key=SDL_CONTROLLER_BUTTON_DPAD_LEFT;break;
                     case SDLK_RIGHT:key=SDL_CONTROLLER_BUTTON_DPAD_RIGHT;break;
                     case SDLK_TAB:key=SDL_CONTROLLER_BUTTON_Y;break;
@@ -2340,7 +2378,10 @@ int main(void) {
     int media_playback_mode=0;
     while(running){
         Uint32 frame_started_at=SDL_GetTicks();
-        stick_arrow(pad,&stick_last_time,&stick_last_key);
+        stick_arrow(pad,page==PLAYER,&stick_last_time,&stick_last_key);
+#ifdef UAPLAY_PS5_SOFTWARE
+        if(page==PLAYER)ps5_player_right_stick(pad,player);
+#endif
         SDL_Event e;
         while(SDL_PollEvent(&e)){
             if(e.type==SDL_QUIT)running=0;
@@ -2352,6 +2393,8 @@ int main(void) {
                     case SDLK_BACKSPACE:key=SDL_CONTROLLER_BUTTON_B;break;
                     case SDLK_UP:key=SDL_CONTROLLER_BUTTON_DPAD_UP;break;
                     case SDLK_DOWN:key=SDL_CONTROLLER_BUTTON_DPAD_DOWN;break;
+                    case SDLK_PAGEUP:key=10001;break;
+                    case SDLK_PAGEDOWN:key=10002;break;
                     case SDLK_LEFT:key=SDL_CONTROLLER_BUTTON_DPAD_LEFT;break;
                     case SDLK_RIGHT:key=SDL_CONTROLLER_BUTTON_DPAD_RIGHT;break;
                     case SDLK_x:key=SDL_CONTROLLER_BUTTON_X;break;
@@ -3375,7 +3418,26 @@ int main(void) {
                 snprintf(message,sizeof(message),"Помилка відеорендерера mpv: %s",mpv_error_string(render_result));
                 command(player,"stop",NULL);page=player_return_page;
             }
+            #ifdef UAPLAY_PS5_SOFTWARE
+            if(video_options[2]!=0){
+                float opacity=(float)(fabs(video_options[2])/100.0*.55);
+                float white=video_options[2]>0?1.f:0.f;
+                box_alpha(&paint,0,0,1280,720,white,white,white,opacity,0);
+            }
+#endif
             if(video_loaded && SDL_GetTicks()<controls_until)draw_player_controls(&paint,player);
+#ifdef UAPLAY_PS5_SOFTWARE
+            if(ps5_stick_hud_kind && SDL_GetTicks()-ps5_stick_hud_at<1500u){
+                char indicator[80];
+                if(ps5_stick_hud_kind==2)
+                    snprintf(indicator,sizeof(indicator),"Гучність %.0f%%",video_options[1]);
+                else snprintf(indicator,sizeof(indicator),
+                              "Яскравість відео %+.0f",video_options[2]);
+                box_alpha(&paint,897,282,351,65,.055f,.068f,.086f,.9f,16);
+                text_center_button(&paint,indicator,904,282,336,65,
+                                   paint.font_small,.94f,.97f,.99f);
+            }
+#endif
             if(pending_next_episode>=0){
                 Uint32 elapsed=SDL_GetTicks()-next_episode_countdown_at;
                 int remaining=elapsed<NEXT_EPISODE_DELAY_MS?
