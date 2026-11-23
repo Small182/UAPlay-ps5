@@ -1,9 +1,9 @@
-name: UAPlay native PS5 VideoOut + ShadowMount exFAT
+name: UAPlay native PS5 VideoOut + updated Switch features
 
 on:
   workflow_dispatch:
   push:
-    branches: [native-ps5, fw13-exfat]
+    branches: [native-ps5, fw13-exfat, fw13-ui-fixes-sync]
     paths:
       - 'source/**'
       - 'ps5/**'
@@ -28,7 +28,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y clang-18 lld-18 ccache git curl wget unzip rsync \
-            build-essential pkg-config python3 cmake ninja-build libcurl4-openssl-dev exfatprogs exfat-fuse fuse3
+            build-essential pkg-config python3 cmake ninja-build libcurl4-openssl-dev ca-certificates exfatprogs exfat-fuse fuse3
       - name: Verify portable catalogue behavior
         run: bash scripts/test-portable.sh
       - name: Retrieve pinned native title runtime
@@ -50,6 +50,7 @@ jobs:
           test -s "$title/sce_sys/param.json"
           test -s "$title/sce_module/libc.prx"
           test -s "$title/romfs/InterVariable.ttf"
+          test -s "$title/romfs/cacert.pem"
           chmod 755 "$title/eboot.bin"
           tar -C "$PS5_NATIVE_OUTPUT" -czf UAPlay-PS5-title-folder.tar.gz "$PS5_TITLE_ID"
           tar -C "$PS5_NATIVE_OUTPUT" -dzf UAPlay-PS5-title-folder.tar.gz
