@@ -106,7 +106,8 @@ static const IptvChannel *ps5_tv_channel(int row){
 static void ps5_tv_reset_selection(void){ps5_tv_selection=0;ps5_tv_filter_focus=0;}
 
 static int ps5_download_selected=0;
-static int ps5_wallpaper_selected=0,ps5_wallpaper_filter=0;
+static int ps5_wallpaper_selected=0,ps5_wallpaper_filter=0,ps5_wallpaper_focus=0;
+static char ps5_wallpaper_query[96]={0};
 static int ps5_wallpaper_revision=0;
 static unsigned ps5_download_confirm_id=0;
 static Uint32 ps5_download_confirm_at=0;
@@ -1503,7 +1504,8 @@ static void footer(Paint *p,const char *message) {
 #endif
 #define HINT(k,l) do{if(count<6){keys[count]=PAD_HINT(k);labels[count]=l;count++;}}while(0)
     if(footer_page==WALLPAPERS){
-        HINT("A","Застосувати");HINT("X","Фільтр");HINT("Y","Скинути");HINT("B","Назад");
+        HINT("A",TR("Застосувати","Apply"));HINT("X",TR("Пошук","Search"));
+        HINT("Y",TR("Стандартні","Default"));HINT("B",TR("Назад","Back"));
     }else if(footer_page==IPTV_GENRES){
         HINT("↑↓",TR("Жанр","Genre"));HINT("A",TR("Застосувати","Apply"));
         HINT("B",TR("Назад","Back"));
@@ -1920,28 +1922,65 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
         }
         footer(p,status);
     } else if(page==WALLPAPERS){
-        screen_header(p,"Шпалери · Wallhaven","A — встановити · X — змінити фільтр");
-        const char *filters[]={"Популярні","Нові","Найкращі","Випадкові"};
-        char hint[256];
-        snprintf(hint,sizeof(hint),"Фільтр: %s  ·  Сторінка: %d / %d",
-                 filters[ps5_wallpaper_filter],wallpapers_current_page(),
-                 wallpapers_last_page());
-        text_muted(p,hint,56,93,1150);
-        int total=wallpapers_count();
-        int start=ps5_wallpaper_selected/UI_ROWS*UI_ROWS;
-        for(int i=start;i<total && i<start+UI_ROWS;i++){
-            const WallpaperItem *item=wallpapers_item(i);
-            char detail[120]={0};
-            snprintf(detail,sizeof(detail),"%d × %d",item->width,item->height);
-            list_row(p,item->name,UI_ROW_Y+(i-start)*UI_ROW_STEP,
-                     i==ps5_wallpaper_selected,detail);
+        screen_header(p,TR("Шпалери","Wallpapers"),"Wallhaven");
+        const UiText filters[]={
+            {"Усі","All"},{"Темні","Dark"},{"Мінімалізм","Minimal"},{"Аніме","Anime"}
+        };
+        for(int i=0;i<4;i++){
+            int x=32+i*158;
+            box_alpha(p,x,101,145,46,i==ps5_wallpaper_filter?.20f:.09f,
+                      .19f,.25f,1.f,13);
+            if(ps5_wallpaper_focus && i==ps5_wallpaper_filter)
+                selection_frame(p,x,101,145,46);
+            text_center_button(p,ui_text(filters[i]),x,101,145,46,
+                               p->font_small,1.f,1.f,1.f);
         }
-        if(total==0)
-            text_muted(p,wallpapers_busy()?"Завантаження списку шпалер...":
-                       "Немає зображень. Спробуйте інший фільтр.",55,260,1120);
-        if(wallpapers_message()[0])
-            text_muted(p,wallpapers_message(),55,602,1170);
-        footer(p,status);
+        box_alpha(p,674,101,360,46,.09f,.13f,.16f,1.f,12);
+        text_small(p,ps5_wallpaper_query[0]?ps5_wallpaper_query:
+                    TR("X: Пошук","X: Search"),690,109,330);
+        box_alpha(p,1050,101,196,46,.13f,.17f,.20f,1.f,12);
+        text_center_button(p,TR("Y: Стандартні","Y: Default"),
+                           1050,101,196,46,p->font_small,1.f,1.f,1.f);
+        const int total=wallpapers_count();
+        const int first=ps5_wallpaper_selected/6*6;
+        int image_budget=1;
+        for(int i=first;i<total && i<first+6;i++){
+            const WallpaperItem *item=wallpapers_item(i);
+            if(!item)continue;
+            int local=i-first;
+            int x=32+(local%3)*417,y=163+(local/3)*228;
+            box_alpha(p,x,y,382,214,.13f,.16f,.19f,1.f,14);
+            int tw=0,th=0;
+            UiTexture thumbnail=logo_texture(item->thumbnail,&image_budget,&tw,&th);
+            if(thumbnail && tw>0 && th>0){
+                SDL_Rect source={0,0,tw,th},dest={x+5,y+5,372,174};
+                if((long long)tw*dest.h>(long long)th*dest.w){
+                    source.w=(int)((long long)th*dest.w/dest.h);
+                    source.x=(tw-source.w)/2;
+                }else{
+                    source.h=(int)((long long)tw*dest.h/dest.w);
+                    source.y=(th-source.h)/2;
+                }
+                SDL_RenderCopy(ui_renderer,(SDL_Texture*)(uintptr_t)thumbnail,
+                               &source,&dest);
+            }else text_center_button(p,"UAPlay",x+8,y+75,366,38,
+                                     p->font_small,.7f,.74f,.79f);
+            if(i==ps5_wallpaper_selected && !ps5_wallpaper_focus)
+                selection_frame(p,x,y,382,214);
+            text_font(p,item->name,x+14,y+185,354,p->font_small,1.f,1.f,1.f);
+            press_preview(p,x,y,382,214,14);
+        }
+        if(!total && !wallpapers_busy())
+            text_center_button(p,TR("Зображення не знайдено","No wallpapers found"),
+                               50,340,1180,55,p->font_small,.8f,.85f,.9f);
+        char page_label[120];
+        snprintf(page_label,sizeof(page_label),
+                TR("Wallhaven %d/%d · Сторінка %d/%d",
+                   "Wallhaven %d/%d · Page %d/%d"),
+                wallpapers_current_page(),wallpapers_last_page(),
+                total?first/6+1:0,(total+5)/6);
+        text_small(p,page_label,46,632,730);
+        footer(p,wallpapers_busy()?"":wallpapers_message());
     } else if(page==IPTV_GENRES){
         screen_header(p,TR("Жанри","Genres"),"IPTV");
         int count=0;
@@ -3284,34 +3323,69 @@ int main(void) {
                     page=APPEARANCE;message[0]=0;continue;
                 }
                 int count=wallpapers_count();
-                if(key==SDL_CONTROLLER_BUTTON_DPAD_UP && ps5_wallpaper_selected>0)
-                    ps5_wallpaper_selected--;
-                if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN &&
-                   ps5_wallpaper_selected+1<count)ps5_wallpaper_selected++;
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_UP){
+                    if(ps5_wallpaper_focus)ps5_wallpaper_focus=0;
+                    else if(ps5_wallpaper_selected>=3)ps5_wallpaper_selected-=3;
+                    else ps5_wallpaper_focus=1;
+                }
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN){
+                    if(ps5_wallpaper_focus)ps5_wallpaper_focus=0;
+                    else if(ps5_wallpaper_selected+3<count &&
+                            ps5_wallpaper_selected%6<3)
+                        ps5_wallpaper_selected+=3;
+                }
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_LEFT){
+                    if(ps5_wallpaper_focus){
+                        ps5_wallpaper_filter=(ps5_wallpaper_filter+3)%4;
+                        wallpapers_browse(ps5_wallpaper_filter,ps5_wallpaper_query,1);
+                        ps5_wallpaper_selected=0;
+                    }else if(ps5_wallpaper_selected>0)ps5_wallpaper_selected--;
+                }
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_RIGHT){
+                    if(ps5_wallpaper_focus){
+                        ps5_wallpaper_filter=(ps5_wallpaper_filter+1)%4;
+                        wallpapers_browse(ps5_wallpaper_filter,ps5_wallpaper_query,1);
+                        ps5_wallpaper_selected=0;
+                    }else if(ps5_wallpaper_selected+1<count)
+                        ps5_wallpaper_selected++;
+                }
                 if(key==SDL_CONTROLLER_BUTTON_LEFTSHOULDER &&
                    wallpapers_current_page()>1){
-                    wallpapers_browse(ps5_wallpaper_filter,"",wallpapers_current_page()-1);
+                    wallpapers_browse(ps5_wallpaper_filter,ps5_wallpaper_query,
+                                      wallpapers_current_page()-1);
                     ps5_wallpaper_selected=0;
                 }
                 if(key==SDL_CONTROLLER_BUTTON_RIGHTSHOULDER &&
                    wallpapers_current_page()<wallpapers_last_page()){
-                    wallpapers_browse(ps5_wallpaper_filter,"",wallpapers_current_page()+1);
+                    wallpapers_browse(ps5_wallpaper_filter,ps5_wallpaper_query,
+                                      wallpapers_current_page()+1);
                     ps5_wallpaper_selected=0;
                 }
                 if(key==SDL_CONTROLLER_BUTTON_X){
-                    ps5_wallpaper_filter=(ps5_wallpaper_filter+1)%4;
-                    ps5_wallpaper_selected=0;
-                    wallpapers_browse(ps5_wallpaper_filter,"",1);
+                    char query[96]={0};
+                    if(keyboard(query,sizeof(query))){
+                        snprintf(ps5_wallpaper_query,sizeof(ps5_wallpaper_query),
+                                 "%s",query);
+                        ps5_wallpaper_selected=0;
+                        wallpapers_browse(ps5_wallpaper_filter,ps5_wallpaper_query,1);
+                    }
                 }
                 if(key==SDL_CONTROLLER_BUTTON_Y){
                     wallpapers_reset();
-                    snprintf(message,sizeof(message),"Шпалери скинуто");
+                    snprintf(message,sizeof(message),"%s",
+                             TR("Стандартний фон відновлено","Default wallpaper restored"));
                 }
-                if(key==SDL_CONTROLLER_BUTTON_A && count &&
-                   ps5_wallpaper_selected<count){
-                    if(wallpapers_apply(ps5_wallpaper_selected))
-                        snprintf(message,sizeof(message),"Завантаження шпалер...");
-                    else snprintf(message,sizeof(message),"Не вдалося вибрати зображення");
+                if(key==SDL_CONTROLLER_BUTTON_A){
+                    if(ps5_wallpaper_focus){
+                        wallpapers_browse(ps5_wallpaper_filter,ps5_wallpaper_query,1);
+                        ps5_wallpaper_selected=0;ps5_wallpaper_focus=0;
+                    }else if(count && ps5_wallpaper_selected<count){
+                        if(wallpapers_apply(ps5_wallpaper_selected))
+                            snprintf(message,sizeof(message),
+                                     TR("Завантаження шпалер...","Downloading wallpaper..."));
+                        else snprintf(message,sizeof(message),
+                                      TR("Не вдалося вибрати зображення","Could not select image"));
+                    }
                 }
                 continue;
             }
