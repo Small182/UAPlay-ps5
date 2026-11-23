@@ -1,33 +1,53 @@
-# UAPlay PS5 — native port (experimental)
+# UAPlay PS5 — native homebrew
 
-Native homebrew port of [UAPlay-nx](https://github.com/Small182/UAPlay-nx) to the PlayStation 5. The **Switch repository is not modified**.
+Native community port based on [UAPlay-nx](https://github.com/Small182/UAPlay-nx) for Nintendo Switch. Works with experimental PS5 native title loading, **not Sony retail PKG**. The Switch repository is unchanged.
 
-**Branch:** `fw13-exfat` (based on the existing native `native-ps5` VideoOut branch). **Status:** untested on physical PS5 firmware 13.00; not a stable release.
+**Active test branch:** [`fw13-ui-fixes-sync`](https://github.com/Small182/UAPlay-ps5/tree/fw13-ui-fixes-sync)
 
-## Native implementation
+The owner confirmed that the previous `fw13-exfat` native build started on **PS5 firmware 13.00**, but it had broken search, no covers, missing IPTV, an invalid button legend, square focus outlines, very small UI and an OPTIONS exit bug.
 
-- Ported SDL-based UAPlay C catalogue and interface with PlayStation controller labels.
-- Native PS5 VideoOut software renderer, avoiding the earlier OpenGL/EVO boot experiments.
-- FFmpeg/SDL_kitchensink playback adapter (video, audio and seeking); on-console codecs, TLS/HLS and DualSense remain unverified.
-- Native title folder `PPSA99283` containing `eboot.bin`, runtime modules, title metadata and UAPlay fonts/assets.
-- GitHub Actions cross-compilation and ShadowMountPlus-compatible **64 KiB cluster exFAT** packaging. A separate lightweight packaging smoke test verifies image readback and exFAT boot-sector geometry.
+## Updated Switch features (0.5.10)
 
-## Build artifacts
+The newer PS5 branch incorporates:
 
-Open [GitHub Actions](https://github.com/Small182/UAPlay-ps5/actions), select **UAPlay native PS5 VideoOut + ShadowMount exFAT** on branch `fw13-exfat`, then select a **successful** run:
+- Latest film/TV metadata and provider source discovery from Switch.
+- IPTV channels, country selection, favorites and native player support.
+- Offline downloads, queue controls, retry and stored-video playback.
+- Ukrainian/English DualSense virtual keyboard and working search entry.
+- Latest player controls (L1 previous/R1 next episode, left-stick seek by 10/60 seconds; right-stick volume and software video brightness, round center controls, touch overlay toggling).
+- Rounded focus highlighting and safe ASCII PlayStation button legend for missing Unicode glyphs.
+- High-resolution PS5 typography and native 1080p VideoOut preference when available.
+- Wallhaven wallpaper gallery and stored backgrounds through PS5 SDL textures.
+- Verified TLS trust bundle and non-sensitive network diagnostics.
 
-- `UAPlay-PS5-Folder-UNTESTED`: native title folder tar.gz.
-- `UAPlay-PS5-VideoOut-UNTESTED`: UFS2 `PPSA99283.ffpkg`.
-- `UAPlay-PS5-exFAT-FW13-UNTESTED`: `PPSA99283.exfat`, 64 KiB clusters.
+**Important:** This branch is a buildable *test candidate*, not yet revalidated on physical PS5 after these changes. Exact feature parity with all Switch 0.5.10 appearance/advanced settings and SubDL player features remains unfinished. Full current Switch source is included for comparison under `switch-upstream/source/`.
 
-GitHub Actions may package a binary without it being compatible with a specific console firmware. **Do not mistake an artifact or green CI check for confirmed launch or playable streaming.**
+## How to get the build
 
-See [TESTING_FW13.md](TESTING_FW13.md) for Ukrainian installation and troubleshooting guidance and [STATUS.md](STATUS.md) for exact limitations.
+1. Open [GitHub Actions](https://github.com/Small182/UAPlay-ps5/actions) and select **UAPlay native PS5 VideoOut + updated Switch features**.
+2. Choose a **successful** run on branch `fw13-ui-fixes-sync`.
+3. Download **UAPlay-PS5-exFAT-FW13-UNTESTED** and extract the ZIP to obtain `PPSA99283.exfat`.
+4. Copy the resulting image into the ShadowMountPlus native homebrew scan directory (for example `/data/homebrew/`), using the supported native PS5 homebrew environment.
 
-## Unfinished work
+Do **not** install `.exfat` as a PS4 PKG, and do not overwrite working installations without keeping a backup.
 
-Hardware validation on firmware 13.00; on-screen keyboard; provider-specific headers; full audio/subtitle support; and synchronization with the newest Switch UI/features. The imported PS5 C sources lag behind the current UAPlay-nx source, so this is a native-port development candidate, **not** feature parity with UAPlay-nx v0.5.9.
+See [TESTING_FW13.md](TESTING_FW13.md) and [STATUS.md](STATUS.md) for hardware test details and caveats. If covers or searches still fail, examine `/download0/uaplay/network.log`; if the display is low-resolution, check `/download0/uaplay/native-boot.log`.
 
-## Third-party components
+## Controller legend
 
-The native build fetches pinned public PS5 homebrew tooling and PacBrew dependencies. It does not embed Sony firmware, proprietary system files or keys. This is a community homebrew build, not an official PS5 application.
+| Action | DualSense |
+| --- | --- |
+| Confirm / select | Cross (X) |
+| Back | Circle (O) |
+| Search / extras | Square ([]) |
+| OPTIONS | Main settings |
+| Previous / next episode | L1 / R1 |
+| Video seek | Left stick: left/right ±10s, up/down ±60s |
+| Playback volume | Right stick left/right |
+| Video brightness overlay | Right stick up/down |
+
+Video brightness is a picture overlay, not a hardware TV backlight controller.
+
+## Build method
+
+GitHub Actions uses pinned public PS5 homebrew toolchain dependencies and checks `eboot.bin`, title assets and 64 KiB-cluster exFAT package structure. CI success does not guarantee firmware compatibility, playable HLS streams or functional PS5 controller/keyboard.
