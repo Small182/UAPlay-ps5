@@ -272,10 +272,31 @@ enum {ACCENT_COLS=5,ACCENT_GRID_X=32,ACCENT_GRID_Y=150,
       ACCENT_STEP_X=247,ACCENT_STEP_Y=144,ACCENT_CARD_W=230,ACCENT_CARD_H=122};
 static int ui_accent_index=ACCENT_TURQUOISE,accent_selected=0;
 
-static int source_mode=0;
+/* source_mode belongs to the upstream settings model above. */
 static int autoplay_episodes=1;
 #define NEXT_EPISODE_DELAY_MS 3000u
 static int ui_light_theme=0,ui_theme_enabled=1,ui_gradient_pass=0;
+static int accent_upgrade(int preset){
+    switch(preset){
+        case ACCENT_SYSTEM:
+            return ui_light_theme?ACCENT_PROCESS_BLUE:ACCENT_TURQUOISE;
+        case ACCENT_YELLOW_012: return ACCENT_YELLOW;
+        case ACCENT_PURPLE:
+        case ACCENT_MEDIUM_PURPLE: return ACCENT_VIOLET;
+        case ACCENT_BLUE_072:
+        case ACCENT_REFLEX_BLUE: return ACCENT_DARK_BLUE;
+        case ACCENT_BRIGHT_RED: return ACCENT_WARM_RED;
+        default: break;
+    }
+    for(int i=0;i<ACCENT_VISIBLE_COUNT;i++)
+        if(accent_visible[i]==preset)return preset;
+    return ACCENT_TURQUOISE;
+}
+static int accent_visible_slot(int preset){
+    for(int i=0;i<ACCENT_VISIBLE_COUNT;i++)
+        if(accent_visible[i]==preset)return i;
+    return 0;
+}
 #define THEME_PATH UAPLAY_CATALOG_DIR "/theme.txt"
 #define THEME_TMP THEME_PATH ".tmp"
 #define THEME_BACKUP THEME_PATH ".bak"
@@ -1298,6 +1319,7 @@ static void accent(float *r,float *g,float *b){
 }
 static Uint32 ui_press_at=0;
 /* Focus colors now follow the user's saved 0.5.10 palette, including white/black. */
+static SDL_Rect ps5_focus_rect;
 static void selection_frame(Paint *p,int x,int y,int w,int h){
     /* A single rounded SDF ring tracks the underlying button/card corners.
        Separate rectangular strokes left square joints on the Switch UI. */
@@ -1313,7 +1335,7 @@ static void selection_frame(Paint *p,int x,int y,int w,int h){
 }
 
 /* PS5 software backend for Switch v0.5.10 focused press feedback. */
-static SDL_Rect ps5_focus_rect;
+
 static void press_preview(Paint *p,int x,int y,int w,int h,int radius){
     Uint32 age=SDL_GetTicks()-ui_press_at;
     if(age>140 || !ui_press_at)return;
