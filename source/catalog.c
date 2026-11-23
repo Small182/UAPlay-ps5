@@ -6,6 +6,9 @@
 #include "version.h"
 
 #include <curl/curl.h>
+#ifdef __PS5__
+#include "console_curl.h"
+#endif
 #include <ctype.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -125,6 +128,9 @@ static size_t on_data(char *ptr, size_t size, size_t count, void *opaque) {
 static void request_options(CURL *curl, const char *url, Response *r,
                             long connection_timeout, long timeout) {
     curl_easy_reset(curl);
+#ifdef __PS5__
+    console_curl_setup(curl);
+#endif
     curl_easy_setopt(curl, CURLOPT_URL, url);
 #ifdef __PS5__
     curl_easy_setopt(curl,CURLOPT_CAINFO,UAPLAY_CA_BUNDLE);
