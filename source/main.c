@@ -1804,7 +1804,7 @@ static void draw_player_controls(Paint *p,mpv_handle *player) {
        catalog_next_episode(episodes,episode_count,active_episode_variant)>=0)
         text_tiny(p,
 #if defined(__PS5__) || defined(__PS4__)
-                  "L1 — Наступна серія",
+                  "L1 / R1 — серія − / +",
 #else
                   "L — Наступна серія",
 #endif
@@ -1819,7 +1819,6 @@ static void draw_player_controls(Paint *p,mpv_handle *player) {
     snprintf(right,sizeof(right),"%02d:%02d",(int)duration/60,(int)duration%60);
     text_small(p,left,35,552,85);
     text_small(p,right,1167,552,88);
-    text_tiny(p,"↑↓ Гучність",67,606,190);
     box_alpha(p,70,649,178,5,.35f,.42f,.52f,1.f,3);
     int volume=(int)video_options[1];
     if(volume<0)volume=0;if(volume>130)volume=130;
@@ -1827,16 +1826,16 @@ static void draw_player_controls(Paint *p,mpv_handle *player) {
     box_alpha(p,70+volume*178/130-7,641,14,20,.96f,.97f,.98f,1.f,7);
     char volume_label[24];snprintf(volume_label,sizeof(volume_label),"%d%%",volume);
     text_tiny(p,volume_label,122,672,100);
-    const int centers[]={354,476,598,832,954,1076};
+    const int centers[]={500,640,780,918,1028,1138};
     const char *icons[]={"−10",paused?"▶":"Ⅱ","+10","","♪","CC"};
     const char *labels[]={"10 с назад","Пауза / пуск","10 с вперед",
                           "Параметри","Аудіо","Субтитри"};
     for(int i=0;i<6;i++){
-        const int w=76;
-        box_alpha(p,centers[i]-w/2,610,w,58,.18f,.22f,.26f,.94f,15);
-        text_center(p,icons[i],centers[i]-w/2,624,w,
+        const int w=i==1?76:58,top=i==1?604:613;
+        box_alpha(p,centers[i]-w/2,top,w,w,.18f,.22f,.26f,.94f,w/2);
+        text_center(p,icons[i],centers[i]-w/2,top+(w-28)/2,w,
                     i==0||i==2?p->font_small:p->font,.98f,.98f,.99f);
-        if(i==3)gear_icon(p,centers[i],639,.18f,.22f,.26f);
+        if(i==3)gear_icon(p,centers[i],643,.18f,.22f,.26f);
         text_center(p,labels[i],centers[i]-72,678,144,p->font_tiny,.78f,.84f,.89f);
     }
 }
@@ -1854,7 +1853,7 @@ static void draw_next_episode_prompt(Paint *p,const Episode *next,int seconds){
     text_small(p,timer,286,376,681);
     text_small(p,
 #if defined(__PS5__) || defined(__PS4__)
-               "✕ — дивитися зараз     ◯ — скасувати",
+               "X — дивитися зараз     O — скасувати",
 #else
                "A — дивитися зараз     B — скасувати",
 #endif
@@ -2395,6 +2394,9 @@ int main(void) {
                 if(page==PLAYER){
                     int was_visible=SDL_GetTicks()<controls_until;
                     controls_until=SDL_GetTicks()+3000;
+                    if(was_visible && video_loaded && ty>=90 && ty<520){
+                        controls_until=0;continue;
+                    }
                     if(!was_visible)continue;
                     if(ty>=24 && ty<=83 && tx>=27 && tx<=180)key=SDL_CONTROLLER_BUTTON_B;
                     else if(ty>=24 && ty<=83 && tx>=969 && tx<=1244 &&
@@ -2421,12 +2423,12 @@ int main(void) {
                             playback_set_value(player,"volume",volume);
                             continue;
                         }
-                        if(tx>=307 && tx<401)key=SDL_CONTROLLER_BUTTON_DPAD_LEFT;
-                        else if(tx>=429 && tx<523)key=SDL_CONTROLLER_BUTTON_A;
-                        else if(tx>=551 && tx<645)key=SDL_CONTROLLER_BUTTON_DPAD_RIGHT;
-                        else if(tx>=785 && tx<879)key=SDL_CONTROLLER_BUTTON_BACK;
-                        else if(tx>=907 && tx<1001)key=SDL_CONTROLLER_BUTTON_Y;
-                        else if(tx>=1029 && tx<1123)key=SDL_CONTROLLER_BUTTON_X;
+                        if(tx>=471 && tx<529)key=SDL_CONTROLLER_BUTTON_DPAD_LEFT;
+                        else if(tx>=602 && tx<678)key=SDL_CONTROLLER_BUTTON_A;
+                        else if(tx>=751 && tx<809)key=SDL_CONTROLLER_BUTTON_DPAD_RIGHT;
+                        else if(tx>=889 && tx<947)key=SDL_CONTROLLER_BUTTON_BACK;
+                        else if(tx>=999 && tx<1057)key=SDL_CONTROLLER_BUTTON_Y;
+                        else if(tx>=1109 && tx<1167)key=SDL_CONTROLLER_BUTTON_X;
                     }else continue;
                 }else if(page==CATALOG){
                     if(ty<78 && tx>=193 && tx<742){
@@ -2638,15 +2640,19 @@ int main(void) {
                     pending_next_episode=-1;
                     command(player,"stop",NULL);page=player_return_page;
                 }
-                if(key==SDL_CONTROLLER_BUTTON_LEFTSHOULDER &&
-                   active_episode_variant>=0 && player_return_page==EPISODES)
-                    next_episode_request=catalog_next_episode(
-                        episodes,episode_count,active_episode_variant);
+                if(active_episode_variant>=0 && player_return_page==EPISODES){
+                    if(key==SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)
+                        next_episode_request=catalog_next_episode(
+                            episodes,episode_count,active_episode_variant);
+                    if(key==SDL_CONTROLLER_BUTTON_LEFTSHOULDER)
+                        next_episode_request=catalog_previous_episode(
+                            episodes,episode_count,active_episode_variant);
+                }
                 if(key==SDL_CONTROLLER_BUTTON_A)command(player,"cycle","pause");
-                int fast=pad && SDL_GameControllerGetAttached(pad) &&
-                    SDL_GameControllerGetButton(pad,SDL_CONTROLLER_BUTTON_RIGHTSHOULDER);
-                if(key==SDL_CONTROLLER_BUTTON_DPAD_LEFT)seek(player,fast?"-60":"-10");
-                if(key==SDL_CONTROLLER_BUTTON_DPAD_RIGHT)seek(player,fast?"60":"10");
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_LEFT)seek(player,"-10");
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_RIGHT)seek(player,"10");
+                if(key==10001)seek(player,"60");
+                if(key==10002)seek(player,"-60");
                 if(key==SDL_CONTROLLER_BUTTON_DPAD_UP)change_volume(player,1);
                 if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN)change_volume(player,-1);
                 if(key==SDL_CONTROLLER_BUTTON_X || key==SDL_CONTROLLER_BUTTON_Y){
