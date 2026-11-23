@@ -12,7 +12,7 @@ for name in source_ranking_smoke; do
 done
 
 for name in country_filter_smoke date_sort_smoke details_metadata_smoke playerjs_playlist_smoke; do
-  cc -O2 -Wall -Wextra -Isource "tests/${name}.c" $libs -o "${out}/${name}"
+  cc -O2 -Wall -Wextra -Isource source/i18n.c "tests/${name}.c" $libs -o "${out}/${name}"
   "${out}/${name}"
 done
 
