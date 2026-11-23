@@ -27,6 +27,7 @@ void posters_init(void);
 /* Returns cached texture or zero while the background download is pending. */
 UiTexture poster_texture(const Movie *movie, int *network_budget);
 /* Begin fetching the currently visible cards and the next few cards. */
+UiTexture logo_texture(const char *url,int *network_budget,int *width,int *height);
 void posters_prefetch(const Movie *movies, int count, int start, int ahead);
 void posters_destroy(void);
 
