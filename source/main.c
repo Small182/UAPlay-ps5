@@ -45,7 +45,8 @@
 
 typedef enum { CATALOG, DETAILS, SOURCES, PLAYER, SETTINGS,
                SEASONS, EPISODES, TRACK_PICKER, VIDEO_SETTINGS,
-               IPTV_COUNTRIES, IPTV_CHANNELS, DOWNLOADS, WALLPAPERS } Page;
+               IPTV_COUNTRIES, IPTV_CHANNELS, DOWNLOADS, WALLPAPERS,
+               PROVIDERS, PROVIDER_SETTINGS, APPEARANCE, ACCENT_PALETTE } Page;
 
 /* Provider selection from UAPlay-nx/main v0.5.10. */
 static const struct {
@@ -1287,12 +1288,28 @@ static void selection_frame(Paint *p,int x,int y,int w,int h){
        Separate rectangular strokes left square joints on the Switch UI. */
     float r,g,b;accent(&r,&g,&b);
     int radius=h>=60?18:h>=40?17:12;
+    ps5_focus_rect=(SDL_Rect){x,y,w,h};
     ui_outline_width=3;
     float opacity=.94f+.06f*sinf(SDL_GetTicks()*.005f);
     /* The focused control briefly settles inward when A is pressed. */
     if(SDL_GetTicks()-ui_press_at<95){x++;y++;w-=2;h-=2;}
     box_alpha(p,x-3,y-3,w+6,h+6,r,g,b,opacity,radius);
     ui_outline_width=0;
+}
+
+/* PS5 software backend for Switch v0.5.10 focused press feedback. */
+static SDL_Rect ps5_focus_rect;
+static void press_preview(Paint *p,int x,int y,int w,int h,int radius){
+    Uint32 age=SDL_GetTicks()-ui_press_at;
+    if(age>140 || !ui_press_at)return;
+    SDL_Rect r={x,y,w,h};
+    if(!SDL_RectEquals(&r,&ps5_focus_rect))return;
+    float a=(1.f-age/140.f)*.80f,rgb_r,rgb_g,rgb_b;
+    accent_real(ui_accent_index,&rgb_r,&rgb_g,&rgb_b);
+    int old=ui_outline_width;
+    ui_outline_width=2;
+    box_alpha(p,x+3,y+3,w-6,h-6,rgb_r,rgb_g,rgb_b,a,radius);
+    ui_outline_width=old;
 }
 static void button(Paint *p,const char *label,int x,int y,int w,int h,int primary){
     /* Flat fills: no simulated border/shadow in Basic White. */
@@ -1566,6 +1583,38 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
                     episodes_in_season(season_ids[selected_season]):0;
     footer_page=page;
     int poster_budget=1;
+    if(page==ACCENT_PALETTE){
+        screen_header(p,TR("Колір акценту","Accent color"),NULL);
+        for(int i=0;i<ACCENT_VISIBLE_COUNT;i++){
+            int preset=accent_visible[i];
+            int x=ACCENT_GRID_X+(i%ACCENT_COLS)*ACCENT_STEP_X;
+            int y=ACCENT_GRID_Y+(i/ACCENT_COLS)*ACCENT_STEP_Y;
+            box_alpha(p,x,y,ACCENT_CARD_W,ACCENT_CARD_H,
+                      .11f,.14f,.18f,1.f,15);
+            if(i==accent_selected)
+                selection_frame(p,x,y,ACCENT_CARD_W,ACCENT_CARD_H);
+            float r,g,b;accent_real(preset,&r,&g,&b);
+            /* Paint accurate swatches, bypassing the Basic White grayscale
+               inversion and the wallpaper panel translucency. A dark 2px
+               border keeps the white chip visible on either theme. */
+            int old_theme=ui_theme_enabled;
+            ui_theme_enabled=0;
+            box_alpha(p,x+8,y+8,ACCENT_CARD_W-16,59,
+                      .13f,.15f,.18f,1.f,10);
+            box_alpha(p,x+10,y+10,ACCENT_CARD_W-20,55,r,g,b,1.f,8);
+            ui_theme_enabled=old_theme;
+            const char *name=ui_language()==UI_ENGLISH?
+                             accent_presets[preset].en:accent_presets[preset].uk;
+            text_center(p,name,x+7,y+73,ACCENT_CARD_W-14,p->font_tiny,
+                        1.f,1.f,1.f);
+            if(preset==ui_accent_index)
+                text_font(p,"✓",x+ACCENT_CARD_W-27,y+73,22,
+                          p->font_tiny,1.f,1.f,1.f);
+            press_preview(p,x,y,ACCENT_CARD_W,ACCENT_CARD_H,15);
+        }
+        footer(p,NULL);
+        return;
+    }
     if (page==CATALOG) {
         box_alpha(p,0,0,1280,80,.059f,.070f,.081f,1.f,0);
         headline(p,"UAPlay",25,18,166);
@@ -1795,46 +1844,112 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
         }
         if(!count)text_muted(p,"Ще немає завантажень",55,220,1110);
         footer(p,status);
-    } else if(page==SETTINGS){
-        screen_header(p,"Налаштування","UAPlay");
-        const char *items[]={"Тема","Інтерфейс","Плеєр","Автовідтворення","Завантаження","Шпалери"};
-        for(int i=0;i<6;i++){
-            int y=120+i*78;
-            box_alpha(p,32,y,417,72,i==settings_selected?.20f:.09f,
-                      i==settings_selected?.29f:.11f,
-                      i==settings_selected?.37f:.14f,1.f,16);
-            if(i==settings_selected){float r,g,b;accent(&r,&g,&b);
-                box_alpha(p,32,y+15,5,42,r,g,b,1.f,2);}
-            if(i==settings_selected){
+    } else if(page==SETTINGS || page==APPEARANCE){
+        int appearance=page==APPEARANCE;
+        screen_header(p,appearance?TR("Зовнішній вигляд","Appearance"):
+                      TR("Налаштування","Settings"),"UAPlay");
+        const char *main_items[]={
+            TR("Зовнішній вигляд","Appearance"),TR("Плеєр","Player"),
+            TR("Джерела","Providers"),TR("Мова / Language","Language / Мова")
+        };
+        const char *appearance_items[]={
+            TR("Тема","Theme"),TR("Колір акценту","Accent color"),
+            TR("Шпалери","Wallpapers"),TR("Вимкнути шпалери","Disable wallpapers")
+        };
+        const char **items=appearance?appearance_items:main_items;
+        int selected=appearance?appearance_selected:settings_selected;
+        int rows=appearance?APPEARANCE_COUNT:SETTING_COUNT;
+        for(int i=0;i<rows;i++){
+            int y=SETTINGS_Y+i*SETTINGS_ROW_STEP;
+            box_alpha(p,32,y,417,SETTINGS_ROW_HEIGHT,
+                      i==selected?.20f:.09f,i==selected?.29f:.11f,
+                      i==selected?.37f:.14f,1.f,16);
+            if(i==selected){
                 float r,g,b;accent(&r,&g,&b);
-                text_font(p,items[i],55,y+(72-text_height(p,items[i],p->font))/2,
-                          372,p->font,r,g,b);
-                selection_frame(p,32,y,417,72);
-            }else text(p,items[i],55,y+(72-text_height(p,items[i],p->font))/2,372);
+                box_alpha(p,32,y+11,5,42,r,g,b,1.f,2);
+            }
+            int label_y=y+(SETTINGS_ROW_HEIGHT-text_height(p,items[i],p->font))/2;
+            /* Focus colors decorate shapes only. Text stays theme-native
+               (dark in Basic White, light in Basic Black). */
+            text(p,items[i],55,label_y,372);
+            if(i==selected)
+                selection_frame(p,32,y,417,SETTINGS_ROW_HEIGHT);
+            press_preview(p,32,y,417,SETTINGS_ROW_HEIGHT,16);
         }
         box_alpha(p,475,136,773,480,.10f,.12f,.15f,1.f,20);
-        headline(p,items[settings_selected],513,174,685);
-        char description[240];
-        if(settings_selected==0)snprintf(description,sizeof(description),"Оформлення: %s",ui_light_theme?"Світла тема":"Темна тема");
-        else if(settings_selected==1){
-            if(ui_light_theme)snprintf(description,sizeof(description),"Акцент світлої теми: синій Nintendo Switch");
-            else snprintf(description,sizeof(description),"Акцент: %s",ui_accent_alt?"Блакитний":"Бірюзовий");
+        headline(p,items[selected],513,174,685);
+        char description[240]={0};
+        const char *help=NULL,*action=TR("Змінити","Change");
+        if(appearance){
+            switch(selected){
+                case APPEARANCE_THEME:
+                    snprintf(description,sizeof(description),TR("Тема: %s","Theme: %s"),
+                             ui_light_theme?TR("Світла","Light"):TR("Темна","Dark"));
+                    help=TR("Перемикає світлу й темну теми. Вибір зберігається на SD-карті.",
+                            "Switch between light and dark themes. The choice is saved.");
+                    break;
+                case APPEARANCE_ACCENT:
+                    snprintf(description,sizeof(description),
+                             TR("Акцент: %s","Accent: %s"),
+                             ui_language()==UI_ENGLISH?
+                                 accent_presets[ui_accent_index].en:
+                                 accent_presets[ui_accent_index].uk);
+                    help=TR("Палітра із 15 кольорів. Колір рамок і виділень зберігається після перезапуску.",
+                            "Choose from 15 accent colors. Focus outlines and highlights are saved.");
+                    action=TR("Відкрити палітру","Open palette");
+                    break;
+                case APPEARANCE_WALLPAPERS:
+                    snprintf(description,sizeof(description),"%s",
+                             *wallpapers_selected()?wallpapers_selected():
+                             TR("Стандартний фон","Default background"));
+                    help=TR("Галерея Wallhaven із пошуком і фільтрами.",
+                            "Browse Wallhaven wallpapers using search and filters.");
+                    action=TR("Відкрити галерею","Open gallery");
+                    break;
+                case APPEARANCE_DEFAULT:
+                    snprintf(description,sizeof(description),"%s",
+                             *wallpapers_selected()?TR("Шпалери увімкнено","Wallpaper enabled"):
+                             TR("Уже стандартний фон","Default background already active"));
+                    help=TR("Вимикає шпалери й відновлює стандартний фон навіть після перезапуску.",
+                            "Disable wallpaper and restore the default background after restart.");
+                    action=TR("Вимкнути","Disable");
+                    break;
+            }
+        }else{
+            switch(selected){
+                case SETTING_APPEARANCE:
+                    snprintf(description,sizeof(description),"%s · %s",
+                             ui_light_theme?TR("Світла тема","Light theme"):TR("Темна тема","Dark theme"),
+                             *wallpapers_selected()?TR("Шпалери увімкнено","Wallpaper enabled"):
+                             TR("Стандартний фон","Default background"));
+                    help=TR("У цьому розділі зібрано теми, кольори та шпалери.",
+                            "Customize themes, accent colors and wallpapers here.");
+                    action=TR("Відкрити","Open");
+                    break;
+                case SETTING_PLAYER:
+                    snprintf(description,sizeof(description),
+                             TR("Швидкість: %.2f · гучність: %.0f","Speed: %.2f · Volume: %.0f"),
+                             video_options[0],video_options[1]);
+                    help=TR("Налаштуйте відео, гучність, субтитри й автовідтворення.",
+                            "Adjust playback, volume, subtitles, and autoplay.");
+                    action=TR("Відкрити параметри","Open player settings");
+                    break;
+                case SETTING_PROVIDERS:
+                    help=TR("Виберіть джерела, у яких UAPlay може шукати відео.",
+                            "Choose which providers UAPlay uses to search for videos.");
+                    action=TR("Відкрити джерела","Manage providers");
+                    break;
+                case SETTING_LANGUAGE:
+                    snprintf(description,sizeof(description),"%s",TR("Українська","English"));
+                    help=TR("Змінює мову інтерфейсу, назв і описів TMDb.",
+                            "Change the interface language and TMDb titles and descriptions.");
+                    action=TR("English","Українська");
+                    break;
+            }
         }
-        else if(settings_selected==2)snprintf(description,sizeof(description),"Швидкість: %.2f · гучність: %.0f",video_options[0],video_options[1]);
-        else if(settings_selected==3)snprintf(description,sizeof(description),"Наступна серія: %s",autoplay_episodes?"Автоматично":"Вручну");
-        else if(settings_selected==4)snprintf(description,sizeof(description),"Завантаження відео та керування чергою");
-        else snprintf(description,sizeof(description),"Зображення Wallhaven — вибір тла");
         text(p,description,516,255,682);
-        const char *help[]={"Перемикає темну та світлу теми. Вибір зберігається на SD-карті.",
-            "Змінює колір виділення на всіх екранах.",
-            "Налаштуйте відео, гучність та субтитри.",
-            "Після завершення серії пропонує наступну через 3 секунди. Кнопка B скасовує перехід. Вибір зберігається.",
-            "Призупинення, відновлення й видалення завантажень.",
-            "Перегляд безпечних шпалер Wallhaven, встановлення або скидання фону."};
-        wrapped(p,help[settings_selected],517,315,675,3,29,p->font_small,.73f,.78f,.84f);
-        button(p,settings_selected==2?"Відкрити параметри":
-               settings_selected==4?"Відкрити завантаження":
-               settings_selected==5?"Відкрити шпалери":"Змінити",515,537,258,55,1);
+        if(help)wrapped(p,help,517,315,675,3,29,p->font_small,.73f,.78f,.84f);
+        button(p,action,515,537,258,55,1);
         footer(p,status);
     } else if (page==DETAILS) {
         screen_header(p,movies[chosen].series?"Про серіал":"Про фільм","UAPlay");
@@ -1872,6 +1987,22 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
         button(p,"▶  Дивитися",65,526,238,58,1);
         button(p,library_favorite(&movies[chosen])?"✓  У вибраному":"+  У вибране",
                320,526,255,58,0);
+        footer(p,status);
+    } else if (page==PROVIDERS || page==PROVIDER_SETTINGS) {
+        int configuring=page==PROVIDER_SETTINGS;
+        screen_header(p,configuring?TR("Джерела","Providers"):TR("Оберіть джерело","Choose a provider"),NULL);
+        if(!configuring && !enabled_providers)
+            text_center_button(p,TR("Увімкніть джерело в Налаштуваннях → Джерела","Enable a provider in Settings → Providers"),
+                               UI_EDGE,305,1216,110,p->font_small,.73f,.77f,.82f);
+        int row=0;
+        for(int i=0;i<PROVIDER_COUNT;i++){
+            int enabled=(enabled_providers & (1u<<(providers[i].id-1)))!=0;
+            if(!configuring && !enabled)continue;
+            int selected=configuring?i==provider_settings_selected:row==selected_provider;
+            list_row(p,ui_text(providers[i].name),UI_ROW_Y+row*UI_ROW_STEP,selected,
+                     configuring?(enabled?TR("Увімкнено","Enabled"):TR("Вимкнено","Disabled")):NULL);
+            row++;
+        }
         footer(p,status);
     } else if (page==SOURCES) {
         screen_header(p,"Джерела відео",NULL);
