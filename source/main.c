@@ -177,16 +177,31 @@ static int expanded_catalog=0;
    12...14: expanded sorting/back controls,
    16...: subsection tabs, 18: clear watch history. */
 static int catalog_hero_focus=0;
+enum { CATALOG_BACK_FOCUS=14, IPTV_TAB_FOCUS=15 };
+static const struct {int focus,x,w;} main_tabs[]={
+    {7,193,96},{8,295,95},{9,398,89},{10,490,144},{IPTV_TAB_FOCUS,638,76},{11,720,110}
+};
+enum { MAIN_TAB_COUNT=sizeof(main_tabs)/sizeof(main_tabs[0]) };
+
+static int main_tab_index(int focus){
+    for(int i=0;i<MAIN_TAB_COUNT;i++)if(main_tabs[i].focus==focus)return i;
+    return -1;
+}
+
+static int main_tab_at(int x){
+    for(int i=0;i<MAIN_TAB_COUNT;i++)
+        if(x>=main_tabs[i].x && x<main_tabs[i].x+main_tabs[i].w)return main_tabs[i].focus;
+    return 0;
+}
+
 static int header_focus_step(int focus,int key){
+    int tab=main_tab_index(focus);
     if(key==SDL_CONTROLLER_BUTTON_DPAD_LEFT){
         if(focus==6)return 5;
-        if(focus==5)return 19;
-        if(focus==19)return 11;
-        if(focus>=8 && focus<=11)return focus-1;
+        if(focus==5)return main_tabs[MAIN_TAB_COUNT-1].focus;
+        if(tab>0)return main_tabs[tab-1].focus;
     }else if(key==SDL_CONTROLLER_BUTTON_DPAD_RIGHT){
-        if(focus>=7 && focus<=10)return focus+1;
-        if(focus==11)return 19;
-        if(focus==19)return 5;
+        if(tab>=0)return tab+1<MAIN_TAB_COUNT?main_tabs[tab+1].focus:5;
         if(focus==5)return 6;
     }
     return focus;
@@ -1622,45 +1637,62 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
         footer(p,NULL);
         return;
     }
-    if (page==CATALOG) {
+    if (page==CATALOG || page==IPTV_CHANNELS) {
         box_alpha(p,0,0,1280,80,.059f,.070f,.081f,1.f,0);
         headline(p,"UAPlay",25,18,166);
-        const char *tabs[]={"Головна","Серіали","Фільми","Мультфільми","Вибране","IPTV"};
-        const int tab_x[]={205,307,410,502,650,768};
-        const int tab_w[]={96,95,89,144,106,82};
-        for(int i=0;i<6;i++){
-            int x=tab_x[i];
-            int active=(i==0 && ui_category==0) ||
-                       (i==1 && ui_category==1) ||
-                       (i==2 && ui_category>=2 && ui_category<=10) ||
-                       (i==3 && ui_category>=ANIMATION_FIRST && ui_category<=ANIMATION_LAST) ||
-                       (i==4 && (ui_category==11 || ui_category==12)) || i==5 && footer_page==IPTV_CHANNELS;
-            if(active)box_alpha(p,x-12,19,tab_w[i],43,.19f,.24f,.28f,1.f,16);
-            if(catalog_hero_focus==(i==5?19:i+7))selection_frame(p,x-12,19,tab_w[i],43);
-            text_center_button(p,tabs[i],x-12,19,tab_w[i],43,
+        const char *tabs[]={TR("Головна","Home"),TR("Серіали","TV Shows"),TR("Фільми","Movies"),
+            TR("Мультфільми","Animation"),"IPTV",TR("Вибране","Favorites")};
+        int active=page==IPTV_CHANNELS?IPTV_TAB_FOCUS:7+tab_for_category(ui_category);
+        int focused=page==CATALOG?catalog_hero_focus:IPTV_TAB_FOCUS;
+        for(int i=0;i<MAIN_TAB_COUNT;i++){
+            int x=main_tabs[i].x,w=main_tabs[i].w,focus=main_tabs[i].focus;
+            if(focus==active)box_alpha(p,x,19,w,43,.19f,.24f,.28f,1.f,16);
+            if(focus==focused)selection_frame(p,x,19,w,43);
+            text_center_button(p,tabs[i],x,19,w,43,
                                p->font_small,.96f,.97f,.99f);
+            press_preview(p,x,19,w,43,16);
         }
         /* Search is a real touch target, not a missing Unicode glyph. */
-        box_alpha(p,854,17,190,47,.13f,.16f,.19f,1.f,15);
-        if(catalog_hero_focus==5)selection_frame(p,854,17,190,47);
-        search_icon(p,876,38,.13f,.16f,.19f);
-        text_font(p,"Пошук",899,17+(47-text_height(p,"Пошук",p->font_small))/2,
-                  137,p->font_small,1.f,1.f,1.f);
+        box_alpha(p,887,17,157,47,.13f,.16f,.19f,1.f,15);
+        if(focused==5)selection_frame(p,887,17,157,47);
+        search_icon(p,915,38,.13f,.16f,.19f);
+        text_font(p,TR("Пошук","Search"),946,17+(47-text_height(p,TR("Пошук","Search"),p->font_small))/2,
+                  88,p->font_small,1.f,1.f,1.f);
+        press_preview(p,887,17,157,47,15);
         box_alpha(p,1058,17,53,47,.13f,.16f,.19f,1.f,15);
-        if(catalog_hero_focus==6)selection_frame(p,1058,17,53,47);
+        if(focused==6)selection_frame(p,1058,17,53,47);
         gear_icon(p,1085,40,.13f,.16f,.19f);
+        press_preview(p,1058,17,53,47,15);
         time_t now=time(NULL);
         struct tm *local=localtime(&now);
         char clock_label[32]="--:--";
         if(local)strftime(clock_label,sizeof(clock_label),"%H:%M",local);
-        text_font(p,clock_label,1140,21,116,p->font_big,.95f,.97f,.99f);
+        text_font(p,clock_label,1116,18,106,
+                  p->font_big,.95f,.97f,.99f);
+        if(page==IPTV_CHANNELS){
+            screen_header(p,"",NULL);
+            int start=ps5_tv_selection/UI_ROWS*UI_ROWS;
+            for(int i=start;i<ps5_tv_channels.count && i<start+UI_ROWS;i++){
+                const IptvChannel *channel=&ps5_tv_channels.channels[i];
+                const char *marked=iptv_favorite_index(&ps5_tv_favorites,channel->id)>=0?
+                    TR("У вибраному","Favorite"):NULL;
+                list_row(p,channel->title,UI_ROW_Y+(i-start)*UI_ROW_STEP,
+                         i==ps5_tv_selection,marked);
+            }
+            if(!ps5_tv_channels.count)
+                text_muted(p,TR("Немає каналів. Оберіть країну.","No channels. Select a country."),
+                           50,230,1100);
+            footer(p,status);
+            return;
+        }
         if(ui_category==11 || ui_category==12){
             /* Favorites uses a poster-only library layout, without the hero.
                Both tabs stay reachable even when their list is empty. */
-            const char *names[]={"На майбутнє","Історія"};
-            const int tab_x[]={32,244},tab_w[]={196,158};
-            for(int i=0;i<2;i++){
-                int selected=ui_category==11+i;
+            const char *names[]={TR("На майбутнє","Watchlist"),TR("Історія","History"),
+                                 TR("Завантажені","Downloads")};
+            const int tab_x[]={32,244,417},tab_w[]={196,158,208};
+            for(int i=0;i<3;i++){
+                int selected=i<2 && ui_category==11+i;
                 box_alpha(p,tab_x[i],101,tab_w[i],47,
                           selected?.20f:.12f,selected?.28f:.15f,
                           selected?.35f:.19f,1.f,13);
@@ -1670,7 +1702,7 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
                                    p->font_small,.96f,.97f,.99f);
             }
             if(ui_category==12){
-                if(catalog_hero_focus==18)
+                if(catalog_hero_focus==19)
                     selection_frame(p,982,101,266,47);
                 button(p,clear_history_confirm?"Підтвердити очищення":
                        "Очистити історію",982,101,266,47,0);
