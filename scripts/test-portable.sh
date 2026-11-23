@@ -7,7 +7,7 @@ trap 'rm -rf "$out"' EXIT
 
 libs="$(pkg-config --cflags --libs libcurl)"
 for name in source_ranking_smoke; do
-  cc -O2 -Wall -Wextra -Isource source/catalog.c "tests/${name}.c" $libs -o "${out}/${name}"
+  cc -O2 -Wall -Wextra -Isource source/catalog.c source/i18n.c "tests/${name}.c" $libs -o "${out}/${name}"
   "${out}/${name}"
 done
 
