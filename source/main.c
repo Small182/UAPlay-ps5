@@ -91,13 +91,18 @@ static Uint32 ps5_download_confirm_at=0;
 static int selected_video_option;
 /* Only player controls useful on the console: speed, volume, subtitle size,
    and HLS quality. Keep mpv's existing option storage intact. */
-static const int visible_video_options[]={0,1,4,6};
+enum { VIDEO_OPTION_AUTOPLAY=7 };
+static const int visible_video_options[]={0,1,4,5,6,VIDEO_OPTION_AUTOPLAY};
 #define VIDEO_OPTION_COUNT ((int)(sizeof(visible_video_options)/sizeof(visible_video_options[0])))
 static double video_options[]={1.0,100.0,0.0,0.0,48.0,0.0,0.0};
 static const char *video_props[]={"speed","volume","brightness","contrast",
                                   "sub-font-size","sub-delay","hls-bitrate"};
-static const char *video_titles[]={"Швидкість","Гучність","Яскравість","Контраст",
-                                   "Розмір субтитрів","Затримка субтитрів","Якість HLS"};
+static const UiText video_titles[]={
+    {"Швидкість","Speed"},{"Гучність","Volume"},{"Яскравість","Brightness"},
+    {"Контраст","Contrast"},{"Розмір субтитрів","Subtitle size"},
+    {"Затримка субтитрів","Subtitle delay"},{"Якість HLS","HLS quality"},
+    {"Автовідтворення","Autoplay"}
+};
 static const double video_steps[]={0.25,5,5,5,4,0.25,1};
 static const double video_min[]={0.5,0,-100,-100,20,-10,0};
 static const double video_max[]={2.0,130,100,100,100,10,4};
@@ -2118,12 +2123,17 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
             box_alpha(p,UI_EDGE,y,1216,60,i==selected_video_option?.20f:.09f,
                       i==selected_video_option?.30f:.11f,
                       i==selected_video_option?.38f:.14f,1.f,13);
-            text_font(p,video_titles[option],55,
-                      y+(60-text_height(p,video_titles[option],p->font))/2,
+            const char *label=ui_text(video_titles[option]);
+            text_font(p,label,55,
+                      y+(60-text_height(p,label,p->font))/2,
                       830,p->font,.96f,.97f,.98f);
             char value[48];
-            if(option==6)snprintf(value,sizeof(value),"%s",hls_labels[(int)video_options[option]]);
+            if(option==VIDEO_OPTION_AUTOPLAY)
+                snprintf(value,sizeof(value),"%s",autoplay_episodes?
+                         TR("Увімкнено","Enabled"):TR("Вимкнено","Disabled"));
+            else if(option==6)snprintf(value,sizeof(value),"%s",hls_labels[(int)video_options[option]]);
             else if(option==0)snprintf(value,sizeof(value),"%.2f",video_options[option]);
+            else if(option==5)snprintf(value,sizeof(value),"%+.2f с",video_options[option]);
             else snprintf(value,sizeof(value),"%.0f",video_options[option]);
             text_center_button(p,value,963,y,240,60,p->font,.95f,.96f,.98f);
             if(i==selected_video_option){float r,g,b;accent(&r,&g,&b);
@@ -3394,6 +3404,11 @@ int main(void) {
                 int direction=(key==SDL_CONTROLLER_BUTTON_DPAD_RIGHT)-(key==SDL_CONTROLLER_BUTTON_DPAD_LEFT);
                 if(direction){
                     int i=visible_video_options[selected_video_option];
+                    if(i==VIDEO_OPTION_AUTOPLAY){
+                        autoplay_episodes=!autoplay_episodes;
+                        theme_save();
+                        continue;
+                    }
                     video_options[i]+=direction*video_steps[i];
                     if(video_options[i]<video_min[i])video_options[i]=video_min[i];
                     if(video_options[i]>video_max[i])video_options[i]=video_max[i];
