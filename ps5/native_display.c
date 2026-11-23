@@ -78,12 +78,31 @@ SDL_Window *ps5_open_display(SDL_Renderer **renderer){
     ps5_boot_trace("PS5 VideoOut mode",size_message);
     /* Use the actual display dimensions: SDL_RenderSetLogicalSize then maps
        the 1280x720 app coordinate space onto the native video output. */
-    SDL_Window *window=SDL_CreateWindow("UAPlay",0,0,mode.w,mode.h,SDL_WINDOW_SHOWN);
+    /* Prefer native 1920x1080 when exposed by the PS5 SDL VideoOut driver.
+       Fallback to its desktop mode if high-resolution allocation fails. */
+    SDL_DisplayMode target=mode;
+    int display_modes=SDL_GetNumDisplayModes(0);
+    for(int i=0;i<display_modes;i++){
+        SDL_DisplayMode candidate;
+        if(SDL_GetDisplayMode(0,i,&candidate)<0)continue;
+        if(candidate.w==1920 && candidate.h==1080){
+            target=candidate;
+            break;
+        }
+    }
+    SDL_Window *window=SDL_CreateWindow("UAPlay",0,0,target.w,target.h,SDL_WINDOW_SHOWN);
+    if(!window && (target.w!=mode.w || target.h!=mode.h)){
+        ps5_boot_trace("1080p window unavailable; using desktop mode",SDL_GetError());
+        window=SDL_CreateWindow("UAPlay",0,0,mode.w,mode.h,SDL_WINDOW_SHOWN);
+    }
     if(!window){
         ps5_boot_trace("Window creation failed",SDL_GetError());
         SDL_Quit();
         return NULL;
     }
+    SDL_GetWindowSize(window,&target.w,&target.h);
+    snprintf(size_message,sizeof(size_message),"active output %dx%d",target.w,target.h);
+    ps5_boot_trace("PS5 UI output",size_message);
     ps5_boot_trace("Creating software renderer",NULL);
     SDL_Renderer *display=SDL_CreateRenderer(window,-1,SDL_RENDERER_SOFTWARE);
     if(!display || SDL_RenderSetLogicalSize(display,1280,720)<0 ||
