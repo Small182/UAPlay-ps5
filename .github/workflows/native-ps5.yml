@@ -1,9 +1,9 @@
-name: UAPlay native PS5 VideoOut
+name: UAPlay native PS5 VideoOut + ShadowMount exFAT
 
 on:
   workflow_dispatch:
   push:
-    branches: [native-ps5]
+    branches: [native-ps5, fw13-exfat]
     paths:
       - 'source/**'
       - 'ps5/**'
@@ -17,7 +17,7 @@ permissions:
 jobs:
   native:
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 90
     env:
       PS5_NATIVE_TEMPLATE: /tmp/uaplay-ps5-title-template
       PS5_NATIVE_OUTPUT: /tmp/uaplay-ps5-output
@@ -28,7 +28,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y clang-18 lld-18 ccache git curl wget unzip rsync \
-            build-essential pkg-config python3 cmake ninja-build libcurl4-openssl-dev
+            build-essential pkg-config python3 cmake ninja-build libcurl4-openssl-dev exfatprogs exfat-fuse fuse3
       - name: Verify portable catalogue behavior
         run: bash scripts/test-portable.sh
       - name: Retrieve pinned native title runtime
@@ -68,3 +68,14 @@ jobs:
           name: UAPlay-PS5-VideoOut-UNTESTED
           path: /tmp/uaplay-ps5-output/PPSA99283.ffpkg
           if-no-files-found: error
+
+      - name: Check exFAT packaging script
+        run: bash -n scripts/package-native-exfat.sh
+      - name: Create 64 KiB exFAT image for ShadowMountPlus
+        run: bash scripts/package-native-exfat.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UAPlay-PS5-exFAT-FW13-UNTESTED
+          path: /tmp/uaplay-ps5-output/PPSA99283.exfat
+          if-no-files-found: error
+          retention-days: 14
