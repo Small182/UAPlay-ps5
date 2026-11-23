@@ -2003,41 +2003,38 @@ static void configure_stream(mpv_handle *player,const char *url) {
 }
 static int keyboard(char *value,size_t size) {
 #ifdef __PS5__
-    /* Native OSK/IME is not available in this video driver. Draw a proper
-       DualSense-operated UTF-8 keyboard rather than silently rejecting search. */
-    static const char *ua[]={
-        "а","б","в","г","ґ","д","е","є","ж","з",
-        "и","і","ї","й","к","л","м","н","о","п",
-        "р","с","т","у","ф","х","ц","ч","ш","щ",
-        "ь","ю","я"
+    /* Physical rows, not alphabetical lists: UA ЙЦУКЕН / EN QWERTY.
+       Explicit row+column focus prevents indices from leaking between the
+       33-key Ukrainian layout and the 26-key English layout. */
+    static const char *uk[][12]={
+        {"й","ц","у","к","е","н","г","ш","щ","з","х","ї"},
+        {"ф","і","в","а","п","р","о","л","д","ж","є",NULL},
+        {"я","ч","с","м","и","т","ь","б","ю","ґ",NULL,NULL}
     };
-    static const char *en[]={
-        "a","b","c","d","e","f","g","h","i","j",
-        "k","l","m","n","o","p","q","r","s","t",
-        "u","v","w","x","y","z"
+    static const char *en[][12]={
+        {"q","w","e","r","t","y","u","i","o","p",NULL,NULL},
+        {"a","s","d","f","g","h","j","k","l",NULL,NULL,NULL},
+        {"z","x","c","v","b","n","m",NULL,NULL,NULL,NULL,NULL}
     };
-    static const char *action[]={"ПРОБІЛ","СТЕРТИ","EN / УК","ЗНАЙТИ","СКАСУВАТИ"};
+    static const int counts[2][3]={{10,9,7},{12,11,10}};
+    static const char *actions[]={"ПРОБІЛ","СТЕРТИ","EN / УК","ЗНАЙТИ","СКАСУВАТИ"};
     if(!keyboard_paint || !keyboard_window || !value || size<2)return 0;
     value[0]=0;
-    int ukrainian=1,focus=0,running_keyboard=1,confirmed=0;
-    while(running_keyboard){
-        const int letters=ukrainian?33:26;
-        const int total=letters+5;
+    int uk_mode=1,row=0,col=0,active=1,confirmed=0;
+    while(active){
         SDL_Event event;
         while(SDL_PollEvent(&event)){
             int key=-1;
-            if(event.type==SDL_QUIT){running_keyboard=0;break;}
+            if(event.type==SDL_QUIT){active=0;break;}
             if(event.type==SDL_CONTROLLERBUTTONDOWN)
                 key=native_button(event.cbutton.button);
             if(event.type==SDL_KEYDOWN){
                 switch(event.key.keysym.sym){
                     case SDLK_RETURN:key=SDL_CONTROLLER_BUTTON_A;break;
-                    case SDLK_ESCAPE:
-                    case SDLK_BACKSPACE:key=SDL_CONTROLLER_BUTTON_B;break;
+                    case SDLK_ESCAPE:key=SDL_CONTROLLER_BUTTON_B;break;
+                    case SDLK_BACKSPACE:key=SDL_CONTROLLER_BUTTON_X;break;
                     case SDLK_UP:key=SDL_CONTROLLER_BUTTON_DPAD_UP;break;
                     case SDLK_DOWN:key=SDL_CONTROLLER_BUTTON_DPAD_DOWN;break;
-                    case SDLK_PAGEUP:key=10001;break;
-                    case SDLK_PAGEDOWN:key=10002;break;
                     case SDLK_LEFT:key=SDL_CONTROLLER_BUTTON_DPAD_LEFT;break;
                     case SDLK_RIGHT:key=SDL_CONTROLLER_BUTTON_DPAD_RIGHT;break;
                     case SDLK_TAB:key=SDL_CONTROLLER_BUTTON_Y;break;
@@ -2045,62 +2042,108 @@ static int keyboard(char *value,size_t size) {
                 }
             }
             if(key==SDL_CONTROLLER_BUTTON_B || key==SDL_CONTROLLER_BUTTON_BACK){
-                running_keyboard=0;break;
+                active=0;break;
             }
-            if(key==SDL_CONTROLLER_BUTTON_Y){ukrainian=!ukrainian;focus=0;continue;}
-            if(key==SDL_CONTROLLER_BUTTON_X){
-                size_t len=strlen(value);
-                if(len){do{len--;}while(len && ((unsigned char)value[len]&0xc0)==0x80);
-                        value[len]=0;}
+            if(key==SDL_CONTROLLER_BUTTON_Y){
+                uk_mode=!uk_mode;
+                int width=row==3?5:counts[uk_mode][row];
+                if(col>=width)col=width-1;
                 continue;
             }
-            int candidate=focus;
-            if(key==SDL_CONTROLLER_BUTTON_DPAD_LEFT)candidate--;
-            if(key==SDL_CONTROLLER_BUTTON_DPAD_RIGHT)candidate++;
-            if(key==SDL_CONTROLLER_BUTTON_DPAD_UP)candidate-=10;
-            if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN)candidate+=10;
-            if(candidate<0)candidate=0;
-            if(candidate>=total)candidate=total-1;
-            if(key>=0 && key!=SDL_CONTROLLER_BUTTON_A){
-                focus=candidate;continue;
+            if(key==SDL_CONTROLLER_BUTTON_X){
+                size_t n=strlen(value);
+                if(n){
+                    do{n--;}while(n && ((unsigned char)value[n]&0xc0)==0x80);
+                    value[n]=0;
+                }
+                continue;
+            }
+            if(key==SDL_CONTROLLER_BUTTON_DPAD_LEFT){
+                int width=row==3?5:counts[uk_mode][row];
+                col=(col+width-1)%width;continue;
+            }
+            if(key==SDL_CONTROLLER_BUTTON_DPAD_RIGHT){
+                int width=row==3?5:counts[uk_mode][row];
+                col=(col+1)%width;continue;
+            }
+            if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN){
+                int oldwidth=row==3?5:counts[uk_mode][row];
+                int destination=(row+1)%4;
+                int newwidth=destination==3?5:counts[uk_mode][destination];
+                col=(col*newwidth)/oldwidth;
+                if(col>=newwidth)col=newwidth-1;
+                row=destination;continue;
+            }
+            if(key==SDL_CONTROLLER_BUTTON_DPAD_UP){
+                int oldwidth=row==3?5:counts[uk_mode][row];
+                int destination=(row+3)%4;
+                int newwidth=destination==3?5:counts[uk_mode][destination];
+                col=(col*newwidth)/oldwidth;
+                if(col>=newwidth)col=newwidth-1;
+                row=destination;continue;
             }
             if(key!=SDL_CONTROLLER_BUTTON_A)continue;
-            if(focus<letters){
-                const char *character=ukrainian?ua[focus]:en[focus];
-                size_t n=strlen(value),add=strlen(character);
-                if(n+add<size){memcpy(value+n,character,add+1);}
-            }else switch(focus-letters){
+            if(row<3){
+                const char *letter=uk_mode?uk[row][col]:en[row][col];
+                if(letter){
+                    size_t n=strlen(value),append=strlen(letter);
+                    if(n+append<size)memcpy(value+n,letter,append+1);
+                }
+                continue;
+            }
+            switch(col){
                 case 0:{
-                    size_t n=strlen(value);if(n+1<size){value[n]=' ';value[n+1]=0;}
+                    size_t n=strlen(value);
+                    if(n+1<size){value[n]=' ';value[n+1]=0;}
                     break;
                 }
                 case 1:{
-                    size_t len=strlen(value);
-                    if(len){do{len--;}while(len && ((unsigned char)value[len]&0xc0)==0x80);
-                            value[len]=0;}
+                    size_t n=strlen(value);
+                    if(n){do{n--;}while(n && ((unsigned char)value[n]&0xc0)==0x80);
+                          value[n]=0;}
                     break;
                 }
-                case 2:ukrainian=!ukrainian;focus=0;break;
-                case 3:confirmed=value[0]!=0;running_keyboard=0;break;
-                case 4:running_keyboard=0;break;
+                case 2:{
+                    uk_mode=!uk_mode;
+                    col=2;
+                    break;
+                }
+                case 3:confirmed=value[0]!=0;active=0;break;
+                case 4:active=0;break;
             }
         }
-        if(!running_keyboard)break;
+        if(!active)break;
         Paint *p=keyboard_paint;
         box_alpha(p,0,0,1280,720,.035f,.045f,.061f,1.f,0);
-        headline(p,"Пошук — введіть назву",55,60,1100);
-        box_alpha(p,55,115,1170,70,.11f,.16f,.20f,1.f,15);
-        text(p,value[0]?value:"Введіть назву фільму або серіалу…",78,132,1120);
-        for(int i=0;i<total;i++){
-            int x=63+(i%10)*116,y=216+(i/10)*77;
-            box_alpha(p,x,y,103,60,i==focus?.20f:.11f,
-                      i==focus?.34f:.17f,i==focus?.40f:.21f,1.f,14);
-            if(i==focus)selection_frame(p,x,y,103,60);
-            const char *label=i<letters?(ukrainian?ua[i]:en[i]):action[i-letters];
-            text_center_button(p,label,x,y,103,60,p->font_small,.97f,.98f,.99f);
+        headline(p,"Пошук — введіть назву",55,48,1100);
+        box_alpha(p,70,108,1140,72,.11f,.16f,.20f,1.f,16);
+        text(p,value[0]?value:"Введіть назву фільму або серіалу…",91,130,1098);
+        for(int r=0;r<3;r++){
+            int count=counts[uk_mode][r];
+            int key_width=78,step=86;
+            int first_x=640-(count*step-8)/2;
+            for(int c=0;c<count;c++){
+                const char *label=uk_mode?uk[r][c]:en[r][c];
+                if(!label)continue;
+                int x=first_x+c*step,y=208+r*91;
+                box_alpha(p,x,y,key_width,68,r==row && c==col?.21f:.105f,
+                          r==row && c==col?.34f:.155f,
+                          r==row && c==col?.42f:.20f,1.f,14);
+                if(r==row && c==col)selection_frame(p,x,y,key_width,68);
+                text_center_button(p,label,x,y,key_width,68,p->font,.98f,.98f,.99f);
+            }
         }
-        text_muted(p,"Хрестик — вибрати   •   Квадрат — стерти   •   Трикутник — мова   •   Коло — назад",
-                   62,636,1160);
+        for(int c=0;c<5;c++){
+            int x=100+c*218,y=507;
+            box_alpha(p,x,y,204,64,row==3 && col==c?.21f:.10f,
+                      row==3 && col==c?.34f:.15f,row==3 && col==c?.41f:.20f,1.f,14);
+            if(row==3 && col==c)selection_frame(p,x,y,204,64);
+            text_center_button(p,actions[c],x,y,204,64,p->font_small,
+                               .98f,.98f,.99f);
+        }
+        text_muted(p,uk_mode?"Розкладка: УК (ЙЦУКЕН)":"Розкладка: EN (QWERTY)",
+                   100,598,700);
+        text_muted(p,"X — вибрати   □ — стерти   △ — мова   O — назад",100,635,1060);
         present_ui(keyboard_window);
         SDL_Delay(16);
     }
