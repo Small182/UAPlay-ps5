@@ -1670,7 +1670,7 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
         text_font(p,clock_label,1116,18,106,
                   p->font_big,.95f,.97f,.99f);
         if(page==IPTV_CHANNELS){
-            screen_header(p,"",NULL);
+            headline(p,"IPTV",32,103,300);
             int start=ps5_tv_selection/UI_ROWS*UI_ROWS;
             for(int i=start;i<ps5_tv_channels.count && i<start+UI_ROWS;i++){
                 const IptvChannel *channel=&ps5_tv_channels.channels[i];
@@ -2888,34 +2888,29 @@ int main(void) {
                     }else continue;
                 }else if(page==CATALOG){
                     if(ty<78 && tx>=193 && tx<742){
-                        const int tab_x[]={193,295,398,490,638};
-                        const int tab_w[]={96,95,89,144,106};
-                        int next=category;
-                        int focused=-1;
-                        for(int i=0;i<5;i++)
-                            if(tx>=tab_x[i] && tx<tab_x[i]+tab_w[i])
-                                {next=category_for_tab(i);focused=i;break;}
-                        int reset_home=focused==0 && home_shelf!=0;
-                        if(focused==0)home_shelf=0;
-                        if(next!=category || reset_home){
-                            category=next;query[0]=message[0]=0;
-                            n=load_category(category,query,movies,message,sizeof(message));
-                            chosen=0;expanded_catalog=0;catalog_hero_focus=0;
-                            clear_history_confirm=0;
+                        int focus=main_tab_at(tx);
+                        if(focus==IPTV_TAB_FOCUS){page=IPTV_COUNTRIES;continue;}
+                        if(focus>=7 && focus<=11){
+                            int next=category_for_tab(focus-7);
+                            if(focus==7)home_shelf=0;
+                            if(next!=category){
+                                category=next;query[0]=message[0]=0;
+                                n=load_category(category,query,movies,message,sizeof(message));
+                                chosen=0;expanded_catalog=0;clear_history_confirm=0;
+                            }
+                            catalog_hero_focus=focus;
                         }
-                        if(focused>=0)catalog_hero_focus=7+focused;
                         continue;
                     }
-                    if(ty<78 && tx>=754 && tx<849){
-                        page=IPTV_COUNTRIES;continue;
-                    }
-                    if(ty<78 && tx>=854 && tx<1044)key=SDL_CONTROLLER_BUTTON_X;
+                    if(ty<78 && tx>=887 && tx<1044)key=SDL_CONTROLLER_BUTTON_X;
                     else if(ty<78 && tx>=1058 && tx<1111)key=SDL_CONTROLLER_BUTTON_BACK;
                     else if((category==11 || category==12) && !expanded_catalog){
                         if(ty>=101 && ty<148){
                             int tab=-1;
                             if(tx>=32 && tx<228)tab=0;
                             else if(tx>=244 && tx<402)tab=1;
+                            else if(tx>=417 && tx<625)tab=2;
+                            if(tab==2){page=DOWNLOADS;ps5_download_selected=0;continue;}
                             if(tab>=0){
                                 if(category!=11+tab){
                                     category=11+tab;
@@ -2928,7 +2923,7 @@ int main(void) {
                                 continue;
                             }
                             if(category==12 && tx>=982 && tx<1248){
-                                catalog_hero_focus=18;
+                                catalog_hero_focus=19;
                                 key=SDL_CONTROLLER_BUTTON_A;
                             }
                         }
@@ -3088,7 +3083,7 @@ int main(void) {
             if(key==SDL_CONTROLLER_BUTTON_START)key=SDL_CONTROLLER_BUTTON_BACK;
 #endif
             if(clear_history_confirm && !(page==CATALOG && category==12 &&
-               catalog_hero_focus==18 && key==SDL_CONTROLLER_BUTTON_A)){
+               catalog_hero_focus==19 && key==SDL_CONTROLLER_BUTTON_A)){
                 clear_history_confirm=0;
                 if(!strncmp(message,"Натисніть A ще раз",strlen("Натисніть A ще раз")))
                     message[0]=0;
@@ -3586,7 +3581,7 @@ int main(void) {
 #endif
             if(page==CATALOG){
                 if(key==SDL_CONTROLLER_BUTTON_BACK){page=SETTINGS;continue;}
-                if(key==SDL_CONTROLLER_BUTTON_A && catalog_hero_focus==19){
+                if(key==SDL_CONTROLLER_BUTTON_A && catalog_hero_focus==IPTV_TAB_FOCUS){
                     page=IPTV_COUNTRIES;message[0]=0;continue;
                 }
                 if(key==SDL_CONTROLLER_BUTTON_A && catalog_hero_focus==5)
@@ -3645,12 +3640,12 @@ int main(void) {
                         if(key==SDL_CONTROLLER_BUTTON_DPAD_LEFT && catalog_hero_focus>16)
                             catalog_hero_focus--;
                         if(key==SDL_CONTROLLER_BUTTON_DPAD_RIGHT &&
-                           catalog_hero_focus<(category==12?18:17))
+                           catalog_hero_focus<18)
                             catalog_hero_focus++;
                         if(key==SDL_CONTROLLER_BUTTON_DPAD_UP)catalog_hero_focus=11;
                         if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN && n)
                             catalog_hero_focus=0;
-                    }else if(((catalog_hero_focus>=5 && catalog_hero_focus<=11) || catalog_hero_focus==19)){
+                    }else if(((catalog_hero_focus>=5 && catalog_hero_focus<=11) || catalog_hero_focus==IPTV_TAB_FOCUS)){
                         catalog_hero_focus=header_focus_step(catalog_hero_focus,key);
                         if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN)
                             catalog_hero_focus=focused_subsection(category);
@@ -3684,7 +3679,7 @@ int main(void) {
                     if(key==SDL_CONTROLLER_BUTTON_DPAD_UP)
                         catalog_hero_focus=n?1:7+tab_for_category(category);
                     if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN)catalog_hero_focus=0;
-                }else if(((catalog_hero_focus>=5 && catalog_hero_focus<=11) || catalog_hero_focus==19)){
+                }else if(((catalog_hero_focus>=5 && catalog_hero_focus<=11) || catalog_hero_focus==IPTV_TAB_FOCUS)){
                     catalog_hero_focus=header_focus_step(catalog_hero_focus,key);
                     if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN)
                         catalog_hero_focus=expanded_catalog?12+sort_button_for_mode(catalog_sort_mode):
@@ -3727,7 +3722,7 @@ int main(void) {
                                 chosen=0;
                             }
                         }
-                    }else if(!expanded_catalog && category==12 && catalog_hero_focus==18){
+                    }else if(!expanded_catalog && category==12 && catalog_hero_focus==19){
                         if(!n){
                             clear_history_confirm=0;
                             snprintf(message,sizeof(message),"Історія вже порожня");
@@ -3748,6 +3743,9 @@ int main(void) {
                         query[0]=message[0]=0;
                         n=load_category(category,query,movies,message,sizeof(message));
                         chosen=0;expanded_catalog=0;catalog_hero_focus=0;
+                    }else if(!expanded_catalog && (category==11 || category==12) &&
+                               catalog_hero_focus==18){
+                        page=DOWNLOADS;ps5_download_selected=0;message[0]=0;
                     }else if(!expanded_catalog && catalog_hero_focus>=16 && catalog_hero_focus<=18){
                         category=category_for_subsection(category,catalog_hero_focus-16);
                         query[0]=message[0]=0;
