@@ -159,7 +159,10 @@ static void request_options(CURL *curl, const char *url, Response *r,
 }
 
 static int transient_network_error(CURLcode result) {
-    return result == CURLE_SSL_CONNECT_ERROR ||
+    /* Console libcurl can fail before HTTP when a reused easy handle is not
+       initialized cleanly. Recreate the handle once, never retry forever. */
+    return result == CURLE_FAILED_INIT ||
+           result == CURLE_SSL_CONNECT_ERROR ||
            result == CURLE_COULDNT_CONNECT ||
            result == CURLE_COULDNT_RESOLVE_HOST ||
            result == CURLE_OPERATION_TIMEDOUT ||
@@ -651,7 +654,9 @@ static char *read_offline_catalog(const char *category) {
     const char *name = !strcmp(category, "series") ? "series" :
                        !strcmp(category, "top") ? "top" : "movies";
     char path[80];
-    snprintf(path, sizeof(path), "romfs:/%s.json", name);
+    /* "romfs:/" exists on Switch only. Native PS5 titles mount read-only
+       assets below /app0/romfs/. Always use the platform asset prefix. */
+    snprintf(path, sizeof(path), UAPLAY_ROMFS "%s.json", name);
     FILE *file = fopen(path, "rb");
     if (!file) return NULL;
     if (fseek(file, 0, SEEK_END)) { fclose(file); return NULL; }
