@@ -1504,10 +1504,15 @@ static void footer(Paint *p,const char *message) {
 #define HINT(k,l) do{if(count<6){keys[count]=PAD_HINT(k);labels[count]=l;count++;}}while(0)
     if(footer_page==WALLPAPERS){
         HINT("A","Застосувати");HINT("X","Фільтр");HINT("Y","Скинути");HINT("B","Назад");
+    }else if(footer_page==IPTV_GENRES){
+        HINT("↑↓",TR("Жанр","Genre"));HINT("A",TR("Застосувати","Apply"));
+        HINT("B",TR("Назад","Back"));
     }else if(footer_page==IPTV_COUNTRIES){
         HINT("A","Країна");HINT("B","Назад");
     }else if(footer_page==IPTV_CHANNELS){
-        HINT("A","Відтворити");HINT("X","Вибране");HINT("B","Країни");
+        HINT("L/R",TR("Сторінка","Page"));HINT("X",TR("Жанри","Genres"));
+        HINT("Y",TR("Вибране","Favorites"));HINT("A",TR("Відкрити","Open"));
+        HINT("B",TR("Назад","Back"));
     }else if(footer_page==DOWNLOADS){
         HINT("A","Відкрити");HINT("Y","Пауза");HINT("X","Видалити");HINT("B","Назад");
     }else if(footer_page==CATALOG){
@@ -3317,7 +3322,9 @@ int main(void) {
                     int cached=0;
                     int result=iptv_load(ps5_tv_country,&ps5_tv_channels,&cached);
                     if(result==IPTV_OK && ps5_tv_channels.count){
-                        ps5_tv_selection=0;
+                        ps5_tv_reset_selection();
+                        ps5_tv_genre=IPTV_ALL;
+                        ps5_tv_show_favorites=0;
                         snprintf(message,sizeof(message),
                                  cached?"IPTV: завантажено з кешу":"IPTV: канали завантажено");
                         page=IPTV_CHANNELS;
@@ -3326,26 +3333,84 @@ int main(void) {
                 }
                 continue;
             }
-            if(page==IPTV_CHANNELS){
+            if(page==IPTV_GENRES){
+                int genre_count=0;iptv_genres(&genre_count);
                 if(key==SDL_CONTROLLER_BUTTON_B || key==SDL_CONTROLLER_BUTTON_BACK){
-                    page=IPTV_COUNTRIES;message[0]=0;continue;
+                    page=IPTV_CHANNELS;continue;
                 }
-                if(key==SDL_CONTROLLER_BUTTON_DPAD_UP && ps5_tv_selection>0)
-                    ps5_tv_selection--;
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_UP && ps5_tv_genre_selection>0)
+                    ps5_tv_genre_selection--;
                 if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN &&
-                   ps5_tv_selection+1<ps5_tv_channels.count)ps5_tv_selection++;
-                if(ps5_tv_channels.count && key==SDL_CONTROLLER_BUTTON_X){
-                    IptvChannel *channel=&ps5_tv_channels.channels[ps5_tv_selection];
-                    int selected=iptv_favorite_index(&ps5_tv_favorites,channel->id);
-                    if(iptv_favorite_toggle(&ps5_tv_favorites,channel))
-                        snprintf(message,sizeof(message),selected<0?
-                                 "IPTV: додано до вибраного":"IPTV: видалено з вибраного");
-                    else snprintf(message,sizeof(message),"Не вдалося зберегти IPTV");
+                   ps5_tv_genre_selection<genre_count)ps5_tv_genre_selection++;
+                if(key==SDL_CONTROLLER_BUTTON_A){
+                    ps5_tv_genre=ps5_tv_genre_selection-1;
+                    ps5_tv_reset_selection();
+                    page=IPTV_CHANNELS;
                 }
-                if(ps5_tv_channels.count && key==SDL_CONTROLLER_BUTTON_A &&
-                   open_player(&player,&render)){
-                    IptvChannel *channel=&ps5_tv_channels.channels[ps5_tv_selection];
-                    if(channel->url && channel->url[0]){
+                continue;
+            }
+            if(page==IPTV_CHANNELS){
+                const int count=ps5_tv_visible_count();
+                if(key==SDL_CONTROLLER_BUTTON_B || key==SDL_CONTROLLER_BUTTON_BACK){
+                    page=CATALOG;catalog_hero_focus=IPTV_TAB_FOCUS;
+                    message[0]=0;continue;
+                }
+                if(key==SDL_CONTROLLER_BUTTON_X){
+                    ps5_tv_genre_selection=ps5_tv_genre+1;
+                    page=IPTV_GENRES;continue;
+                }
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_UP){
+                    if(!ps5_tv_filter_focus){
+                        if(ps5_tv_selection>=6)ps5_tv_selection-=6;
+                        else ps5_tv_filter_focus=1;
+                    }else ps5_tv_filter_focus=0;
+                }
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN){
+                    if(ps5_tv_filter_focus)ps5_tv_filter_focus=0;
+                    else if(ps5_tv_selection+6<count)ps5_tv_selection+=6;
+                }
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_LEFT){
+                    if(ps5_tv_filter_focus>1)ps5_tv_filter_focus--;
+                    else if(!ps5_tv_filter_focus && ps5_tv_selection>0)ps5_tv_selection--;
+                }
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_RIGHT){
+                    if(ps5_tv_filter_focus && ps5_tv_filter_focus<3)ps5_tv_filter_focus++;
+                    else if(!ps5_tv_filter_focus && ps5_tv_selection+1<count)ps5_tv_selection++;
+                }
+                if(key==SDL_CONTROLLER_BUTTON_LEFTSHOULDER && count>0){
+                    ps5_tv_selection=(ps5_tv_selection/12>0?ps5_tv_selection/12-1:0)*12;
+                    ps5_tv_filter_focus=0;
+                }
+                if(key==SDL_CONTROLLER_BUTTON_RIGHTSHOULDER && count>0){
+                    int next=(ps5_tv_selection/12+1)*12;
+                    if(next<count)ps5_tv_selection=next;
+                    ps5_tv_filter_focus=0;
+                }
+                if(key==SDL_CONTROLLER_BUTTON_Y && count>0 && !ps5_tv_filter_focus){
+                    const IptvChannel *channel=ps5_tv_channel(ps5_tv_selection);
+                    if(channel){
+                        int was=iptv_favorite_index(&ps5_tv_favorites,channel->id)>=0;
+                        if(iptv_favorite_toggle(&ps5_tv_favorites,channel)){
+                            if(ps5_tv_show_favorites && was)ps5_tv_reset_selection();
+                            snprintf(message,sizeof(message),was?
+                                TR("Видалено з вибраного","Removed from favorites"):
+                                TR("Додано у вибране","Added to favorites"));
+                        }else snprintf(message,sizeof(message),"%s",
+                                TR("Не вдалося зберегти IPTV","Could not save IPTV favorites"));
+                    }
+                }
+                if(key==SDL_CONTROLLER_BUTTON_A && ps5_tv_filter_focus){
+                    switch(ps5_tv_filter_focus){
+                        case 1:page=IPTV_COUNTRIES;break;
+                        case 2:ps5_tv_genre_selection=ps5_tv_genre+1;page=IPTV_GENRES;break;
+                        case 3:ps5_tv_show_favorites=!ps5_tv_show_favorites;
+                               ps5_tv_reset_selection();break;
+                    }
+                    continue;
+                }
+                if(key==SDL_CONTROLLER_BUTTON_A && count>0 && open_player(&player,&render)){
+                    const IptvChannel *channel=ps5_tv_channel(ps5_tv_selection);
+                    if(channel && channel->url && *channel->url){
                         configure_stream(player,channel->url);
                         if(channel->agent && *channel->agent)
                             mpv_set_property_string(player,"user-agent",channel->agent);
