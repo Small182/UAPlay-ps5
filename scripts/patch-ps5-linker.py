@@ -49,6 +49,12 @@ def main() -> None:
             "--wrap=PS5_IsScreenKeyboardShown",
         )
         text = text.replace(wrap_marker, wrap_marker + "wrap_options+=(" + " ".join(wraps) + ")\n")
+    # Sandboxed PS5 libc fcntl() rejects socket F_SETFD/F_SETFL (EINVAL).
+    # PacBrew libcurl must use our console-tested __wrap_fcntl shim.
+    wrap_marker = "wrap_options=()\\n"
+    if text.count(wrap_marker) != 1:
+        raise SystemExit("pinned PS5 template changed: fcntl wrapper hook not found")
+    text = text.replace(wrap_marker, wrap_marker + "wrap_options+=(--wrap=fcntl)\\n")
     target.write_text(text, encoding="utf-8")
 
 
