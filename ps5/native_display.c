@@ -73,6 +73,11 @@ SDL_Window *ps5_open_display(SDL_Renderer **renderer){
         SDL_Quit();
         return NULL;
     }
+    char size_message[100];
+    snprintf(size_message,sizeof(size_message),"native display %dx%d",mode.w,mode.h);
+    ps5_boot_trace("PS5 VideoOut mode",size_message);
+    /* Use the actual display dimensions: SDL_RenderSetLogicalSize then maps
+       the 1280x720 app coordinate space onto the native video output. */
     SDL_Window *window=SDL_CreateWindow("UAPlay",0,0,mode.w,mode.h,SDL_WINDOW_SHOWN);
     if(!window){
         ps5_boot_trace("Window creation failed",SDL_GetError());
