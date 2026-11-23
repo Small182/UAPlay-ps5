@@ -1753,6 +1753,7 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
                     TR("Каналів не знайдено","No channels found"),
                     UI_EDGE,271,1216,96,p->font_big,.73f,.77f,.82f);
             const int page_start=ps5_tv_selection/12*12;
+            int logo_budget=1;
             for(int i=page_start;i<count && i<page_start+12;i++){
                 const IptvChannel *channel=ps5_tv_channel(i);
                 if(!channel)continue;
@@ -1761,7 +1762,15 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
                 box_alpha(p,x,y,184,184,.19f,.22f,.26f,1.f,16);
                 if(i==ps5_tv_selection && !ps5_tv_filter_focus)
                     selection_frame(p,x,y,184,184);
-                text_center_button(p,"TV",x,y+18,184,72,p->font_big,.75f,.79f,.82f);
+                int image_w=0,image_h=0;
+                UiTexture logo=logo_texture(channel->logo,&logo_budget,&image_w,&image_h);
+                if(logo && image_w>0 && image_h>0){
+                    float scale=150.f/(float)(image_w>image_h?image_w:image_h);
+                    int rw=(int)fmaxf(1,image_w*scale);
+                    int rh=(int)fmaxf(1,image_h*scale);
+                    SDL_Rect target={x+(184-rw)/2,y+7+(150-rh)/2,rw,rh};
+                    SDL_RenderCopy(ui_renderer,(SDL_Texture*)(uintptr_t)logo,NULL,&target);
+                }else text_center_button(p,"TV",x,y+18,184,72,p->font_big,.75f,.79f,.82f);
                 text_center_button(p,channel->title,x+8,y+98,168,55,p->font_small,
                                    .95f,.97f,.99f);
                 const int favorite=iptv_favorite_index(&ps5_tv_favorites,channel->id)>=0;
@@ -2994,7 +3003,7 @@ int main(void) {
                         else if(tx>=1109 && tx<1167)key=SDL_CONTROLLER_BUTTON_X;
                     }else continue;
                 }else if(page==CATALOG){
-                    if(ty<78 && tx>=193 && tx<742){
+                    if(ty<78 && tx>=193 && tx<830){
                         int focus=main_tab_at(tx);
                         if(focus==IPTV_TAB_FOCUS){page=IPTV_COUNTRIES;continue;}
                         if(focus>=7 && focus<=11){
@@ -3272,7 +3281,7 @@ int main(void) {
 
             if(page==WALLPAPERS){
                 if(key==SDL_CONTROLLER_BUTTON_B || key==SDL_CONTROLLER_BUTTON_BACK){
-                    page=SETTINGS;message[0]=0;continue;
+                    page=APPEARANCE;message[0]=0;continue;
                 }
                 int count=wallpapers_count();
                 if(key==SDL_CONTROLLER_BUTTON_DPAD_UP && ps5_wallpaper_selected>0)
@@ -3431,7 +3440,8 @@ int main(void) {
                 DownloadInfo list[DOWNLOADS_MAX];
                 int count=downloads_list(list,DOWNLOADS_MAX);
                 if(key==SDL_CONTROLLER_BUTTON_B || key==SDL_CONTROLLER_BUTTON_BACK){
-                    page=SETTINGS;continue;
+                    page=CATALOG;category=11;catalog_hero_focus=18;
+                    message[0]=0;continue;
                 }
                 if(key==SDL_CONTROLLER_BUTTON_DPAD_UP && ps5_download_selected>0)
                     ps5_download_selected--;
