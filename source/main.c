@@ -35,18 +35,26 @@
 #include "library.h"
 #include "playback.h"
 #include "platform_paths.h"
+#include "i18n.h"
+#include "iptv.h"
+#include "downloads.h"
 #ifdef UAPLAY_PS5_SOFTWARE
 #include "../ps5/native_display.h"
 #endif
 
 typedef enum { CATALOG, DETAILS, SOURCES, PLAYER, SETTINGS,
-               SEASONS, EPISODES, TRACK_PICKER, VIDEO_SETTINGS } Page;
+               SEASONS, EPISODES, TRACK_PICKER, VIDEO_SETTINGS,
+               IPTV_COUNTRIES, IPTV_CHANNELS, DOWNLOADS } Page;
 
 static Episode episodes[EPISODES_MAX];
 static int episode_count,season_ids[64],season_count,selected_season,selected_episode;
 static int active_episode_variant=-1;
 static MediaTrack tracks[TRACKS_MAX];
 static int track_count,selected_track,subtitle_picker;
+/* PS5 native UI works with the updated Switch IPTV/download engines. */
+static IptvCatalog ps5_tv_channels={0},ps5_tv_favorites={0};
+static int ps5_tv_country=0,ps5_tv_selection=0,ps5_tv_country_count=0;
+static int ps5_download_selected=0;
 static int selected_video_option;
 /* Only player controls useful on the console: speed, volume, subtitle size,
    and HLS quality. Keep mpv's existing option storage intact. */
@@ -138,11 +146,13 @@ static int catalog_hero_focus=0;
 static int header_focus_step(int focus,int key){
     if(key==SDL_CONTROLLER_BUTTON_DPAD_LEFT){
         if(focus==6)return 5;
-        if(focus==5)return 11;
+        if(focus==5)return 19;
+        if(focus==19)return 11;
         if(focus>=8 && focus<=11)return focus-1;
     }else if(key==SDL_CONTROLLER_BUTTON_DPAD_RIGHT){
         if(focus>=7 && focus<=10)return focus+1;
-        if(focus==11)return 5;
+        if(focus==11)return 19;
+        if(focus==19)return 5;
         if(focus==5)return 6;
     }
     return focus;
@@ -1243,7 +1253,13 @@ static void footer(Paint *p,const char *message) {
 #define PAD_HINT(k) (k)
 #endif
 #define HINT(k,l) do{if(count<6){keys[count]=PAD_HINT(k);labels[count]=l;count++;}}while(0)
-    if(footer_page==CATALOG){
+    if(footer_page==IPTV_COUNTRIES){
+        HINT("A","Країна");HINT("B","Назад");
+    }else if(footer_page==IPTV_CHANNELS){
+        HINT("A","Відтворити");HINT("X","Вибране");HINT("B","Країни");
+    }else if(footer_page==DOWNLOADS){
+        HINT("A","Пауза");HINT("X","Видалити");HINT("B","Назад");
+    }else if(footer_page==CATALOG){
         HINT("L","Розділ");HINT("R","Розділ");
         HINT("X","Пошук");HINT("−","Меню");HINT("A","Відкрити");
         if(ui_category==0 && !expanded_catalog)HINT("↑↓","Добірка");
@@ -1345,10 +1361,13 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
         transition_at=SDL_GetTicks();
     }
     previous_home_shelf=home_shelf;
-    footer_position=page==CATALOG?(n?chosen+1:0):page==SOURCES?(sn?source+1:0):
+    footer_position=page==IPTV_CHANNELS?(ps5_tv_channels.count?ps5_tv_selection+1:0):
+                     page==IPTV_COUNTRIES?ps5_tv_country+1:
+                     page==DOWNLOADS?ps5_download_selected+1:page==CATALOG?(n?chosen+1:0):page==SOURCES?(sn?source+1:0):
                     page==EPISODES?(episode_count?selected_episode+1:0):
                     page==SEASONS?(season_count?selected_season+1:0):0;
-    footer_total=page==CATALOG?n:page==SOURCES?sn:page==SEASONS?season_count:
+    footer_total=page==IPTV_COUNTRIES?ps5_tv_country_count:
+                 page==IPTV_CHANNELS?ps5_tv_channels.count:page==CATALOG?n:page==SOURCES?sn:page==SEASONS?season_count:
                  page==EPISODES && selected_season<season_count?
                     episodes_in_season(season_ids[selected_season]):0;
     footer_page=page;
@@ -1356,27 +1375,27 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
     if (page==CATALOG) {
         box_alpha(p,0,0,1280,80,.059f,.070f,.081f,1.f,0);
         headline(p,"UAPlay",25,18,166);
-        const char *tabs[]={"Головна","Серіали","Фільми","Мультфільми","Вибране"};
-        const int tab_x[]={205,307,410,502,650};
-        const int tab_w[]={96,95,89,144,106};
-        for(int i=0;i<5;i++){
+        const char *tabs[]={"Головна","Серіали","Фільми","Мультфільми","Вибране","IPTV"};
+        const int tab_x[]={205,307,410,502,650,768};
+        const int tab_w[]={96,95,89,144,106,82};
+        for(int i=0;i<6;i++){
             int x=tab_x[i];
             int active=(i==0 && ui_category==0) ||
                        (i==1 && ui_category==1) ||
                        (i==2 && ui_category>=2 && ui_category<=10) ||
                        (i==3 && ui_category>=ANIMATION_FIRST && ui_category<=ANIMATION_LAST) ||
-                       (i==4 && (ui_category==11 || ui_category==12));
+                       (i==4 && (ui_category==11 || ui_category==12)) || i==5 && footer_page==IPTV_CHANNELS;
             if(active)box_alpha(p,x-12,19,tab_w[i],43,.19f,.24f,.28f,1.f,16);
-            if(catalog_hero_focus==i+7)selection_frame(p,x-12,19,tab_w[i],43);
+            if(catalog_hero_focus==(i==5?19:i+7))selection_frame(p,x-12,19,tab_w[i],43);
             text_center_button(p,tabs[i],x-12,19,tab_w[i],43,
                                p->font_small,.96f,.97f,.99f);
         }
         /* Search is a real touch target, not a missing Unicode glyph. */
-        box_alpha(p,767,17,277,47,.13f,.16f,.19f,1.f,15);
-        if(catalog_hero_focus==5)selection_frame(p,767,17,277,47);
-        search_icon(p,800,38,.13f,.16f,.19f);
-        text_font(p,"Пошук",831,17+(47-text_height(p,"Пошук",p->font_small))/2,
-                  177,p->font_small,1.f,1.f,1.f);
+        box_alpha(p,854,17,190,47,.13f,.16f,.19f,1.f,15);
+        if(catalog_hero_focus==5)selection_frame(p,854,17,190,47);
+        search_icon(p,876,38,.13f,.16f,.19f);
+        text_font(p,"Пошук",899,17+(47-text_height(p,"Пошук",p->font_small))/2,
+                  137,p->font_small,1.f,1.f,1.f);
         box_alpha(p,1058,17,53,47,.13f,.16f,.19f,1.f,15);
         if(catalog_hero_focus==6)selection_frame(p,1058,17,53,47);
         gear_icon(p,1085,40,.13f,.16f,.19f);
@@ -1516,6 +1535,48 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
                 card_title(p,movies[i].title,x,y+224,164);
             }
         }
+        footer(p,status);
+    } else if(page==IPTV_COUNTRIES){
+        screen_header(p,"IPTV · Країни","Оберіть країну");
+        int ncountry=0;
+        const IptvCountry *countries=iptv_countries(&ncountry);
+        int start=ps5_tv_country/UI_ROWS*UI_ROWS;
+        for(int i=start;i<ncountry && i<start+UI_ROWS;i++){
+            list_row(p,ui_text(countries[i].name),
+                     UI_ROW_Y+(i-start)*UI_ROW_STEP,i==ps5_tv_country,countries[i].code);
+        }
+        footer(p,status);
+    } else if(page==IPTV_CHANNELS){
+        screen_header(p,"IPTV · Канали","X — додати до вибраного");
+        int start=ps5_tv_selection/UI_ROWS*UI_ROWS;
+        for(int i=start;i<ps5_tv_channels.count && i<start+UI_ROWS;i++){
+            const IptvChannel *channel=&ps5_tv_channels.channels[i];
+            const char *marked=iptv_favorite_index(&ps5_tv_favorites,channel->id)>=0?
+                "У вибраному":NULL;
+            list_row(p,channel->title,UI_ROW_Y+(i-start)*UI_ROW_STEP,
+                     i==ps5_tv_selection,marked);
+        }
+        if(!ps5_tv_channels.count)
+            text_muted(p,"Канали не знайдено. Оберіть іншу країну.",50,230,1100);
+        footer(p,status);
+    } else if(page==DOWNLOADS){
+        screen_header(p,"Завантаження","A — пауза/продовжити · X — видалити");
+        DownloadInfo items[DOWNLOADS_MAX];
+        int count=downloads_list(items,DOWNLOADS_MAX);
+        int start=ps5_download_selected/UI_ROWS*UI_ROWS;
+        for(int i=start;i<count && i<start+UI_ROWS;i++){
+            char detail[96]={0};
+            const char *label=items[i].state==DOWNLOAD_DONE?"Готово":
+                items[i].state==DOWNLOAD_PAUSED?"Пауза":
+                items[i].state==DOWNLOAD_FAILED?"Помилка":
+                items[i].state==DOWNLOAD_ACTIVE?"Завантаження":"У черзі";
+            if(items[i].permille>=0)
+                snprintf(detail,sizeof(detail),"%s %d%%",label,items[i].permille/10);
+            else snprintf(detail,sizeof(detail),"%s",label);
+            list_row(p,items[i].title,UI_ROW_Y+(i-start)*UI_ROW_STEP,
+                     i==ps5_download_selected,detail);
+        }
+        if(!count)text_muted(p,"Ще немає завантажень",55,220,1110);
         footer(p,status);
     } else if(page==SETTINGS){
         screen_header(p,"Налаштування","UAPlay");
@@ -2170,6 +2231,11 @@ int main(void) {
         goto cleanup_paint;
     }
     catalog_http_init();
+    iptv_favorites_load(&ps5_tv_favorites);
+    ps5_tv_country=iptv_country_index("ua");
+    if(ps5_tv_country<0)ps5_tv_country=0;
+    (void)iptv_countries(&ps5_tv_country_count);
+    downloads_init();
 #elif defined(__PS4__)
     library_init();
     theme_load();
@@ -2348,7 +2414,10 @@ int main(void) {
                         if(focused>=0)catalog_hero_focus=7+focused;
                         continue;
                     }
-                    if(ty<78 && tx>=767 && tx<1044)key=SDL_CONTROLLER_BUTTON_X;
+                    if(ty<78 && tx>=754 && tx<849){
+                        page=IPTV_COUNTRIES;continue;
+                    }
+                    if(ty<78 && tx>=854 && tx<1044)key=SDL_CONTROLLER_BUTTON_X;
                     else if(ty<78 && tx>=1058 && tx<1111)key=SDL_CONTROLLER_BUTTON_BACK;
                     else if((category==11 || category==12) && !expanded_catalog){
                         if(ty>=101 && ty<148){
@@ -2578,6 +2647,90 @@ int main(void) {
                 }
                 continue;
             }
+
+            if(page==IPTV_COUNTRIES){
+                if(key==SDL_CONTROLLER_BUTTON_B || key==SDL_CONTROLLER_BUTTON_BACK){
+                    page=CATALOG;continue;
+                }
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_UP && ps5_tv_country>0)ps5_tv_country--;
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN &&
+                   ps5_tv_country+1<ps5_tv_country_count)ps5_tv_country++;
+                if(key==SDL_CONTROLLER_BUTTON_A){
+                    iptv_free(&ps5_tv_channels);
+                    snprintf(message,sizeof(message),"Завантаження IPTV...");
+                    draw(&paint,IPTV_COUNTRIES,movies,n,chosen,sources,sn,source,
+                         "IPTV",message);
+                    present_ui(window);
+                    int cached=0;
+                    int result=iptv_load(ps5_tv_country,&ps5_tv_channels,&cached);
+                    if(result==IPTV_OK && ps5_tv_channels.count){
+                        ps5_tv_selection=0;
+                        snprintf(message,sizeof(message),
+                                 cached?"IPTV: завантажено з кешу":"IPTV: канали завантажено");
+                        page=IPTV_CHANNELS;
+                    }else snprintf(message,sizeof(message),
+                                  "IPTV: не вдалося завантажити канали (код %d)",result);
+                }
+                continue;
+            }
+            if(page==IPTV_CHANNELS){
+                if(key==SDL_CONTROLLER_BUTTON_B || key==SDL_CONTROLLER_BUTTON_BACK){
+                    page=IPTV_COUNTRIES;message[0]=0;continue;
+                }
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_UP && ps5_tv_selection>0)
+                    ps5_tv_selection--;
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN &&
+                   ps5_tv_selection+1<ps5_tv_channels.count)ps5_tv_selection++;
+                if(ps5_tv_channels.count && key==SDL_CONTROLLER_BUTTON_X){
+                    IptvChannel *channel=&ps5_tv_channels.channels[ps5_tv_selection];
+                    int selected=iptv_favorite_index(&ps5_tv_favorites,channel->id);
+                    if(iptv_favorite_toggle(&ps5_tv_favorites,channel))
+                        snprintf(message,sizeof(message),selected<0?
+                                 "IPTV: додано до вибраного":"IPTV: видалено з вибраного");
+                    else snprintf(message,sizeof(message),"Не вдалося зберегти IPTV");
+                }
+                if(ps5_tv_channels.count && key==SDL_CONTROLLER_BUTTON_A &&
+                   open_player(&player,&render)){
+                    IptvChannel *channel=&ps5_tv_channels.channels[ps5_tv_selection];
+                    if(channel->url && channel->url[0]){
+                        configure_stream(player,channel->url);
+                        if(channel->agent && *channel->agent)
+                            mpv_set_property_string(player,"user-agent",channel->agent);
+                        if(channel->referrer && *channel->referrer)
+                            mpv_set_property_string(player,"referrer",channel->referrer);
+                        snprintf(playing_url,sizeof(playing_url),"%s",channel->url);
+                        playing_movie=(Movie){0};
+                        active_episode_variant=-1;resume_at=0;
+                        command(player,"loadfile",channel->url);
+                        video_started_at=SDL_GetTicks();video_loaded=0;
+                        controls_until=SDL_GetTicks()+3000;
+                        player_return_page=IPTV_CHANNELS;page=PLAYER;
+                    }
+                }
+                continue;
+            }
+            if(page==DOWNLOADS){
+                DownloadInfo list[DOWNLOADS_MAX];
+                int count=downloads_list(list,DOWNLOADS_MAX);
+                if(key==SDL_CONTROLLER_BUTTON_B || key==SDL_CONTROLLER_BUTTON_BACK){
+                    page=SETTINGS;continue;
+                }
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_UP && ps5_download_selected>0)
+                    ps5_download_selected--;
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN && ps5_download_selected+1<count)
+                    ps5_download_selected++;
+                if(count && ps5_download_selected<count){
+                    if(key==SDL_CONTROLLER_BUTTON_A)
+                        downloads_toggle_pause(list[ps5_download_selected].id);
+                    if(key==SDL_CONTROLLER_BUTTON_X){
+                        downloads_remove(list[ps5_download_selected].id);
+                        if(ps5_download_selected>0)ps5_download_selected--;
+                    }
+                    if(key==SDL_CONTROLLER_BUTTON_Y)
+                        downloads_retry(list[ps5_download_selected].id);
+                }
+                continue;
+            }
             if(page==TRACK_PICKER){
                 if(key==SDL_CONTROLLER_BUTTON_B)page=PLAYER;
                 if(key==SDL_CONTROLLER_BUTTON_DPAD_UP && selected_track>0)selected_track--;
@@ -2706,6 +2859,9 @@ int main(void) {
 #endif
             if(page==CATALOG){
                 if(key==SDL_CONTROLLER_BUTTON_BACK){page=SETTINGS;continue;}
+                if(key==SDL_CONTROLLER_BUTTON_A && catalog_hero_focus==19){
+                    page=IPTV_COUNTRIES;message[0]=0;continue;
+                }
                 if(key==SDL_CONTROLLER_BUTTON_A && catalog_hero_focus==5)
                     key=SDL_CONTROLLER_BUTTON_X;
                 else if(key==SDL_CONTROLLER_BUTTON_A && catalog_hero_focus==6){
@@ -2758,7 +2914,7 @@ int main(void) {
                     continue;
                 }
                 if(!expanded_catalog && (category==11 || category==12)){
-                    if(catalog_hero_focus>=16){
+                    if(catalog_hero_focus>=16 && catalog_hero_focus<=18){
                         if(key==SDL_CONTROLLER_BUTTON_DPAD_LEFT && catalog_hero_focus>16)
                             catalog_hero_focus--;
                         if(key==SDL_CONTROLLER_BUTTON_DPAD_RIGHT &&
@@ -2767,7 +2923,7 @@ int main(void) {
                         if(key==SDL_CONTROLLER_BUTTON_DPAD_UP)catalog_hero_focus=11;
                         if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN && n)
                             catalog_hero_focus=0;
-                    }else if(catalog_hero_focus>=5 && catalog_hero_focus<=11){
+                    }else if(((catalog_hero_focus>=5 && catalog_hero_focus<=11) || catalog_hero_focus==19)){
                         catalog_hero_focus=header_focus_step(catalog_hero_focus,key);
                         if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN)
                             catalog_hero_focus=focused_subsection(category);
@@ -2792,7 +2948,7 @@ int main(void) {
                     if(key==SDL_CONTROLLER_BUTTON_DPAD_UP)
                         catalog_hero_focus=7+tab_for_category(category);
                     if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN)catalog_hero_focus=0;
-                }else if(!expanded_catalog && catalog_hero_focus>=16){
+                }else if(!expanded_catalog && catalog_hero_focus>=16 && catalog_hero_focus<=18){
                     int count=subsection_count(category);
                     if(key==SDL_CONTROLLER_BUTTON_DPAD_LEFT && catalog_hero_focus>16)
                         catalog_hero_focus--;
@@ -2801,7 +2957,7 @@ int main(void) {
                     if(key==SDL_CONTROLLER_BUTTON_DPAD_UP)
                         catalog_hero_focus=n?1:7+tab_for_category(category);
                     if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN)catalog_hero_focus=0;
-                }else if(catalog_hero_focus>=5 && catalog_hero_focus<=11){
+                }else if(((catalog_hero_focus>=5 && catalog_hero_focus<=11) || catalog_hero_focus==19)){
                     catalog_hero_focus=header_focus_step(catalog_hero_focus,key);
                     if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN)
                         catalog_hero_focus=expanded_catalog?12+sort_button_for_mode(catalog_sort_mode):
@@ -2865,7 +3021,7 @@ int main(void) {
                         query[0]=message[0]=0;
                         n=load_category(category,query,movies,message,sizeof(message));
                         chosen=0;expanded_catalog=0;catalog_hero_focus=0;
-                    }else if(!expanded_catalog && catalog_hero_focus>=16){
+                    }else if(!expanded_catalog && catalog_hero_focus>=16 && catalog_hero_focus<=18){
                         category=category_for_subsection(category,catalog_hero_focus-16);
                         query[0]=message[0]=0;
                         n=load_category(category,query,movies,message,sizeof(message));
@@ -3186,6 +3342,11 @@ int main(void) {
     }
 #ifdef __SWITCH__
     if(media_playback_mode)appletSetMediaPlaybackState(false);
+#endif
+#ifdef UAPLAY_PS5_SOFTWARE
+    downloads_shutdown();
+    iptv_free(&ps5_tv_channels);
+    iptv_free(&ps5_tv_favorites);
 #endif
     catalog_loader_shutdown();
     free(movies);
