@@ -55,6 +55,8 @@ static int track_count,selected_track,subtitle_picker;
 static IptvCatalog ps5_tv_channels={0},ps5_tv_favorites={0};
 static int ps5_tv_country=0,ps5_tv_selection=0,ps5_tv_country_count=0;
 static int ps5_download_selected=0;
+static unsigned ps5_download_confirm_id=0;
+static Uint32 ps5_download_confirm_at=0;
 static int selected_video_option;
 /* Only player controls useful on the console: speed, volume, subtitle size,
    and HLS quality. Keep mpv's existing option storage intact. */
@@ -1287,7 +1289,7 @@ static void footer(Paint *p,const char *message) {
     }else if(footer_page==IPTV_CHANNELS){
         HINT("A","Відтворити");HINT("X","Вибране");HINT("B","Країни");
     }else if(footer_page==DOWNLOADS){
-        HINT("A","Пауза");HINT("X","Видалити");HINT("B","Назад");
+        HINT("A","Відкрити");HINT("Y","Пауза");HINT("X","Видалити");HINT("B","Назад");
     }else if(footer_page==CATALOG){
         HINT("L","Розділ");HINT("R","Розділ");
         HINT("X","Пошук");HINT("−","Меню");HINT("A","Відкрити");
@@ -2374,6 +2376,8 @@ int main(void) {
     int pending_next_episode=-1,next_episode_request=-1;
     Uint32 next_episode_countdown_at=0;
     Uint32 stick_last_time=0;
+    Uint32 ps5_toast_last_changed=0;
+    char ps5_toast_last_text[256]={0};
     int stick_last_key=0;
     int media_playback_mode=0;
     while(running){
@@ -2672,7 +2676,8 @@ int main(void) {
             if(page==PLAYER){
                 if(key==SDL_CONTROLLER_BUTTON_B){
                     double position=0;
-                    if (player && mpv_get_property(player,"time-pos",MPV_FORMAT_DOUBLE,&position)>=0)
+                    if (player && playing_movie.id>0 &&
+                        mpv_get_property(player,"time-pos",MPV_FORMAT_DOUBLE,&position)>=0)
                         { /* Position belongs to a particular episode. */
                             if(active_episode_variant>=0 && player_return_page==EPISODES)
                                 library_set_episode_progress(&playing_movie,
@@ -2803,14 +2808,58 @@ int main(void) {
                 if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN && ps5_download_selected+1<count)
                     ps5_download_selected++;
                 if(count && ps5_download_selected<count){
-                    if(key==SDL_CONTROLLER_BUTTON_A)
-                        downloads_toggle_pause(list[ps5_download_selected].id);
-                    if(key==SDL_CONTROLLER_BUTTON_X){
-                        downloads_remove(list[ps5_download_selected].id);
-                        if(ps5_download_selected>0)ps5_download_selected--;
+                    const DownloadInfo *selected=&list[ps5_download_selected];
+                    unsigned id=selected->id;
+                    if(key==SDL_CONTROLLER_BUTTON_A){
+                        if(selected->state==DOWNLOAD_FAILED){
+                            downloads_retry(id);
+                            snprintf(message,sizeof(message),"Повторне завантаження...");
+                        }else if(selected->state==DOWNLOAD_DONE){
+                            Download item={0};
+                            if(downloads_get(id,&item) && open_player(&player,&render)){
+                                char path[256]={0};
+                                downloads_play_path(&item,path,sizeof(path));
+                                playing_movie=item.movie;
+                                active_episode_variant=-1;
+                                resume_at=item.episode?0:library_progress(&playing_movie);
+                                pending_subtitle[0]=0;
+                                snprintf(playing_url,sizeof(playing_url),"%s",path);
+                                configure_stream(player,path);
+                                command(player,"loadfile",path);
+                                video_started_at=SDL_GetTicks();video_loaded=0;
+                                controls_until=SDL_GetTicks()+3000;
+                                player_return_page=DOWNLOADS;page=PLAYER;
+                            }else snprintf(message,sizeof(message),
+                                           "Не вдалося відкрити збережене відео");
+                        }else{
+                            int state=downloads_toggle_pause(id);
+                            if(state>=0)snprintf(message,sizeof(message),
+                                state==DOWNLOAD_PAUSED?"Завантаження призупинено":
+                                "Завантаження продовжено");
+                        }
                     }
-                    if(key==SDL_CONTROLLER_BUTTON_Y)
-                        downloads_retry(list[ps5_download_selected].id);
+                    if(key==SDL_CONTROLLER_BUTTON_Y){
+                        if(selected->state==DOWNLOAD_FAILED)downloads_retry(id);
+                        else if(selected->state==DOWNLOAD_ACTIVE ||
+                                selected->state==DOWNLOAD_QUEUED ||
+                                selected->state==DOWNLOAD_PAUSED)
+                            downloads_toggle_pause(id);
+                    }
+                    if(key==SDL_CONTROLLER_BUTTON_X){
+                        Uint32 now=SDL_GetTicks();
+                        if(ps5_download_confirm_id!=id ||
+                           now-ps5_download_confirm_at>3000u){
+                            ps5_download_confirm_id=id;
+                            ps5_download_confirm_at=now;
+                            snprintf(message,sizeof(message),
+                                "Натисніть □ ще раз для скасування або видалення");
+                        }else{
+                            downloads_remove(id);
+                            ps5_download_confirm_id=0;
+                            snprintf(message,sizeof(message),"Видалено");
+                            if(ps5_download_selected>0)ps5_download_selected--;
+                        }
+                    }
                 }
                 continue;
             }
@@ -3466,6 +3515,16 @@ int main(void) {
                 posters_prefetch(movies,n,start,expanded_catalog?18:12);
             }
         }
+        if(strcmp(ps5_toast_last_text,message)!=0){
+            snprintf(ps5_toast_last_text,sizeof(ps5_toast_last_text),"%s",message);
+            ps5_toast_last_changed=SDL_GetTicks();
+        }
+        /* Standard action notifications disappear after three seconds. Keep
+           loading/error states visible until their underlying task ends. */
+        if(message[0] && SDL_GetTicks()-ps5_toast_last_changed>=3000u &&
+           !strstr(message,"Завантаження каталогу") &&
+           !strstr(message,"TMDb:") && !strstr(message,"HTTP ") &&
+           !strstr(message,"Не вдалося"))message[0]=0;
         present_ui(window);
         /* Do not stack a fixed sleep on top of the time that Eden/Switch
            already spent drawing or waiting for VSync. */
