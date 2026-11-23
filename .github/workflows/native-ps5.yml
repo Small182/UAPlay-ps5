@@ -1,9 +1,9 @@
-name: UAPlay native PS5 VideoOut + network fix + QWERTY
+name: UAPlay PS5 native Switch main 0.5.10 UI port
 
 on:
   workflow_dispatch:
   push:
-    branches: [native-ps5, fw13-exfat, fw13-ui-fixes-sync, fw13-native-network-v0510]
+    branches: [native-ps5, fw13-exfat, fw13-ui-fixes-sync, fw13-native-network-v0510, fw13-main-0510-ui]
     paths:
       - 'source/**'
       - 'ps5/**'
