@@ -45,7 +45,7 @@
 
 typedef enum { CATALOG, DETAILS, SOURCES, PLAYER, SETTINGS,
                SEASONS, EPISODES, TRACK_PICKER, VIDEO_SETTINGS,
-               IPTV_COUNTRIES, IPTV_CHANNELS, DOWNLOADS, WALLPAPERS,
+               IPTV_COUNTRIES, IPTV_CHANNELS, IPTV_GENRES, DOWNLOADS, WALLPAPERS,
                PROVIDERS, PROVIDER_SETTINGS, APPEARANCE, ACCENT_PALETTE } Page;
 
 /* Provider selection from UAPlay-nx/main v0.5.10. */
@@ -83,6 +83,28 @@ static int track_count,selected_track,subtitle_picker;
 /* PS5 native UI works with the updated Switch IPTV/download engines. */
 static IptvCatalog ps5_tv_channels={0},ps5_tv_favorites={0};
 static int ps5_tv_country=0,ps5_tv_selection=0,ps5_tv_country_count=0;
+static int ps5_tv_genre=IPTV_ALL,ps5_tv_genre_selection=0,ps5_tv_show_favorites=0;
+static int ps5_tv_filter_focus=0; /* 0 grid, 1 country, 2 genre, 3 favorite */
+static int ps5_tv_visible_count(void){
+    const IptvCatalog *active=ps5_tv_show_favorites?&ps5_tv_favorites:&ps5_tv_channels;
+    if(ps5_tv_show_favorites || ps5_tv_genre==IPTV_ALL)return active->count;
+    int count=0;
+    for(int i=0;i<active->count;i++)
+        if(active->channels[i].genres&(UINT32_C(1)<<ps5_tv_genre))count++;
+    return count;
+}
+static const IptvChannel *ps5_tv_channel(int row){
+    const IptvCatalog *active=ps5_tv_show_favorites?&ps5_tv_favorites:&ps5_tv_channels;
+    if(row<0 || row>=active->count)return NULL;
+    if(ps5_tv_show_favorites || ps5_tv_genre==IPTV_ALL)return &active->channels[row];
+    for(int i=0;i<active->count;i++)
+        if(active->channels[i].genres&(UINT32_C(1)<<ps5_tv_genre)){
+            if(!row--)return &active->channels[i];
+        }
+    return NULL;
+}
+static void ps5_tv_reset_selection(void){ps5_tv_selection=0;ps5_tv_filter_focus=0;}
+
 static int ps5_download_selected=0;
 static int ps5_wallpaper_selected=0,ps5_wallpaper_filter=0;
 static int ps5_wallpaper_revision=0;
@@ -1621,13 +1643,15 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
     }
     previous_home_shelf=home_shelf;
     footer_position=page==WALLPAPERS?ps5_wallpaper_selected+1:
-                     page==IPTV_CHANNELS?(ps5_tv_channels.count?ps5_tv_selection+1:0):
+                     page==IPTV_CHANNELS?(ps5_tv_visible_count()?ps5_tv_selection/12+1:0):
+                     page==IPTV_GENRES?ps5_tv_genre_selection+1:
                      page==IPTV_COUNTRIES?ps5_tv_country+1:
                      page==DOWNLOADS?ps5_download_selected+1:page==CATALOG?(n?chosen+1:0):page==SOURCES?(sn?source+1:0):
                     page==EPISODES?(episode_count?selected_episode+1:0):
                     page==SEASONS?(season_count?selected_season+1:0):0;
     footer_total=page==WALLPAPERS?wallpapers_count():page==IPTV_COUNTRIES?ps5_tv_country_count:
-                 page==IPTV_CHANNELS?ps5_tv_channels.count:page==CATALOG?n:page==SOURCES?sn:page==SEASONS?season_count:
+                 page==IPTV_GENRES?IPTV_MAX_GENRES+1:
+                 page==IPTV_CHANNELS?(ps5_tv_visible_count()+11)/12:page==CATALOG?n:page==SOURCES?sn:page==SEASONS?season_count:
                  page==EPISODES && selected_season<season_count?
                     episodes_in_season(season_ids[selected_season]):0;
     footer_page=page;
@@ -1697,18 +1721,54 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
         text_font(p,clock_label,1116,18,106,
                   p->font_big,.95f,.97f,.99f);
         if(page==IPTV_CHANNELS){
-            headline(p,"IPTV",32,103,300);
-            int start=ps5_tv_selection/UI_ROWS*UI_ROWS;
-            for(int i=start;i<ps5_tv_channels.count && i<start+UI_ROWS;i++){
-                const IptvChannel *channel=&ps5_tv_channels.channels[i];
-                const char *marked=iptv_favorite_index(&ps5_tv_favorites,channel->id)>=0?
-                    TR("У вибраному","Favorite"):NULL;
-                list_row(p,channel->title,UI_ROW_Y+(i-start)*UI_ROW_STEP,
-                         i==ps5_tv_selection,marked);
+            int nc=0,ng=0;
+            const IptvCountry *countries=iptv_countries(&nc);
+            const UiText *genres=iptv_genres(&ng);
+            char country_label[160],genre_label[160];
+            snprintf(country_label,sizeof(country_label),TR("Країна: %s","Country: %s"),
+                ps5_tv_country>=0 && ps5_tv_country<nc?
+                ui_text(countries[ps5_tv_country].name):"UA");
+            snprintf(genre_label,sizeof(genre_label),TR("Жанри: %s","Genres: %s"),
+                ps5_tv_genre>=0 && ps5_tv_genre<ng?
+                ui_text(genres[ps5_tv_genre]):TR("Усі","All"));
+            const char *labels[]={country_label,genre_label,
+                ps5_tv_show_favorites?TR("Усі канали","All channels"):
+                                      TR("Вибране","Favorites")};
+            const int fx[]={32,412,782},fw[]={364,354,236};
+            for(int i=0;i<3;i++){
+                if(ps5_tv_filter_focus==i+1)
+                    selection_frame(p,fx[i],101,fw[i],46);
+                button(p,labels[i],fx[i],101,fw[i],46,
+                       i==2 && ps5_tv_show_favorites);
             }
-            if(!ps5_tv_channels.count)
-                text_muted(p,TR("Немає каналів. Оберіть країну.","No channels. Select a country."),
-                           50,230,1100);
+            int count=ps5_tv_visible_count();
+            if(!count)
+                text_center_button(p,ps5_tv_show_favorites?
+                    TR("У вибраному поки немає каналів","No favorite channels yet"):
+                    TR("Каналів не знайдено","No channels found"),
+                    UI_EDGE,271,1216,96,p->font_big,.73f,.77f,.82f);
+            const int page_start=ps5_tv_selection/12*12;
+            for(int i=page_start;i<count && i<page_start+12;i++){
+                const IptvChannel *channel=ps5_tv_channel(i);
+                if(!channel)continue;
+                const int local=i-page_start;
+                int x=38+(local%6)*202,y=177+(local/6)*211;
+                box_alpha(p,x,y,184,184,.19f,.22f,.26f,1.f,16);
+                if(i==ps5_tv_selection && !ps5_tv_filter_focus)
+                    selection_frame(p,x,y,184,184);
+                text_center_button(p,"TV",x,y+18,184,72,p->font_big,.75f,.79f,.82f);
+                text_center_button(p,channel->title,x+8,y+98,168,55,p->font_small,
+                                   .95f,.97f,.99f);
+                const int favorite=iptv_favorite_index(&ps5_tv_favorites,channel->id)>=0;
+                box_alpha(p,x+144,y+7,31,31,.10f,.13f,.17f,.93f,10);
+                text_center_button(p,favorite?"★":"☆",x+144,y+7,31,31,
+                                   p->font_small,.96f,.88f,.62f);
+                press_preview(p,x,y,184,184,16);
+            }
+            if(count){
+                const IptvChannel *selected=ps5_tv_channel(ps5_tv_selection);
+                if(selected)text_muted(p,selected->title,54,630,1150);
+            }
             footer(p,status);
             return;
         }
@@ -1867,6 +1927,16 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
                        "Немає зображень. Спробуйте інший фільтр.",55,260,1120);
         if(wallpapers_message()[0])
             text_muted(p,wallpapers_message(),55,602,1170);
+        footer(p,status);
+    } else if(page==IPTV_GENRES){
+        screen_header(p,TR("Жанри","Genres"),"IPTV");
+        int count=0;
+        const UiText *genres=iptv_genres(&count);
+        int start=ps5_tv_genre_selection/UI_ROWS*UI_ROWS;
+        for(int i=start;i<count+1 && i<start+UI_ROWS;i++)
+            list_row(p,i==0?TR("Усі","All"):ui_text(genres[i-1]),
+                     UI_ROW_Y+(i-start)*UI_ROW_STEP,
+                     i==ps5_tv_genre_selection,NULL);
         footer(p,status);
     } else if(page==IPTV_COUNTRIES){
         screen_header(p,"IPTV · Країни","Оберіть країну");
@@ -2741,7 +2811,7 @@ int main(void) {
     }
     catalog_http_init();
     iptv_favorites_load(&ps5_tv_favorites);
-    ps5_tv_country=iptv_country_index("ua");
+    ps5_tv_country=iptv_country_index("UA");
     if(ps5_tv_country<0)ps5_tv_country=0;
     (void)iptv_countries(&ps5_tv_country_count);
     downloads_init();
