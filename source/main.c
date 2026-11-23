@@ -268,7 +268,7 @@ static int catalog_worker(void *opaque){
             Movie target=loader->details_request;
             loader->details_requested=0;
             SDL_UnlockMutex(loader->mutex);
-            catalog_fetch_details(&target);
+            catalog_fetch_details(&target,NULL,0);
             SDL_LockMutex(loader->mutex);
             if(!loader->quit){
                 loader->details_result=target;
