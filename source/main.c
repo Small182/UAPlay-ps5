@@ -1455,8 +1455,15 @@ static void footer(Paint *p,const char *message) {
     }else if(footer_page==DETAILS){
         HINT("X","Вибране");HINT("Y","Переглянуто");
         HINT("A","Натиснути");HINT("B","Назад");
-    }else if(footer_page==SETTINGS){
-        HINT("↑↓","Пункт");HINT("A","Змінити");HINT("B","Закрити");
+    }else if(footer_page==SETTINGS || footer_page==APPEARANCE){
+        HINT("↑↓",TR("Пункт","Item"));HINT("A",TR("Вибрати","Select"));
+        HINT("B",footer_page==APPEARANCE?TR("Назад","Back"):TR("Закрити","Close"));
+    }else if(footer_page==ACCENT_PALETTE){
+        HINT("←→↑↓",TR("Колір","Color"));HINT("A",TR("Застосувати","Apply"));
+        HINT("B",TR("Назад","Back"));
+    }else if(footer_page==PROVIDER_SETTINGS || footer_page==PROVIDERS){
+        HINT("↑↓",TR("Джерело","Provider"));HINT("A",TR("Вибрати","Select"));
+        HINT("B",TR("Назад","Back"));
     }else if(footer_page==TRACK_PICKER){
         HINT("↑↓","Доріжка");HINT("A","Застосувати");HINT("B","Назад");
     }else if(footer_page==VIDEO_SETTINGS){
@@ -2717,6 +2724,7 @@ int main(void) {
     Source sources[UAKINO_MAX]={0};
     int n=0,sn=0,chosen=0,source=0,category=0,running=1;
     Page page=CATALOG;
+    int catalog_language_changed=0;
     char query[192]={0},message[256]={0};
     catalog_loader_init();
 #if defined(__PS4__) || defined(UAPLAY_PS5_SOFTWARE)
@@ -3393,23 +3401,128 @@ int main(void) {
                 }
                 continue;
             }
-            if(page==SETTINGS){
-                if(key==SDL_CONTROLLER_BUTTON_B || key==SDL_CONTROLLER_BUTTON_BACK){page=CATALOG;continue;}
-                if(key==SDL_CONTROLLER_BUTTON_DPAD_UP && settings_selected>0)settings_selected--;
-                if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN && settings_selected<5)settings_selected++;
+            if(page==ACCENT_PALETTE){
+                if(key==SDL_CONTROLLER_BUTTON_B || key==SDL_CONTROLLER_BUTTON_BACK){
+                    page=APPEARANCE;
+                    continue;
+                }
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_LEFT && accent_selected>0)
+                    accent_selected--;
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_RIGHT &&
+                   accent_selected+1<ACCENT_VISIBLE_COUNT)
+                    accent_selected++;
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_UP &&
+                   accent_selected>=ACCENT_COLS)
+                    accent_selected-=ACCENT_COLS;
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN &&
+                   accent_selected+ACCENT_COLS<ACCENT_VISIBLE_COUNT)
+                    accent_selected+=ACCENT_COLS;
                 if(key==SDL_CONTROLLER_BUTTON_A){
-                    if(settings_selected==0){ui_light_theme=!ui_light_theme;theme_save();}
-                    else if(settings_selected==1)ui_accent_alt=!ui_accent_alt;
-                    else if(settings_selected==2){
+                    int previous=ui_accent_index;
+                    ui_accent_index=accent_visible[accent_selected];
+                    if(theme_save()){
+                        message[0]=0;
+                        appearance_selected=APPEARANCE_ACCENT;
+                        page=APPEARANCE;
+                    }else{
+                        ui_accent_index=previous;
+                        snprintf(message,sizeof(message),"%s",
+                                 TR("Не вдалося зберегти колір акценту.",
+                                    "Could not save the accent color."));
+                    }
+                }
+                continue;
+            }
+            if(page==APPEARANCE){
+                if(key==SDL_CONTROLLER_BUTTON_B || key==SDL_CONTROLLER_BUTTON_BACK){
+                    page=SETTINGS;
+                    continue;
+                }
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_UP && appearance_selected>0)
+                    appearance_selected--;
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN &&
+                   appearance_selected<APPEARANCE_COUNT-1)appearance_selected++;
+                if(key==SDL_CONTROLLER_BUTTON_A){
+                    if(appearance_selected==APPEARANCE_THEME){
+                        ui_light_theme=!ui_light_theme;
+                        theme_save();
+                    }else if(appearance_selected==APPEARANCE_ACCENT){
+                        accent_selected=accent_visible_slot(ui_accent_index);
+                        page=ACCENT_PALETTE;
+                    }else if(appearance_selected==APPEARANCE_WALLPAPERS){
+                        ps5_wallpaper_selected=0;
+                        wallpapers_open();
+                        page=WALLPAPERS;
+                    }else if(appearance_selected==APPEARANCE_DEFAULT){
+                        wallpapers_reset();
+                        snprintf(message,sizeof(message),"%s",
+                                 TR("Стандартний фон відновлено","Default background restored"));
+                    }
+                }
+                continue;
+            }
+            if(page==SETTINGS){
+                if(key==SDL_CONTROLLER_BUTTON_B || key==SDL_CONTROLLER_BUTTON_BACK){
+                    if(catalog_language_changed){
+                        n=load_category(category,query,movies,message,sizeof(message));
+                        if(chosen>=n)chosen=n?n-1:0;
+                        catalog_language_changed=0;
+                    }
+                    page=CATALOG;
+                    continue;
+                }
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_UP && settings_selected>0)settings_selected--;
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN && settings_selected<SETTING_COUNT-1)
+                    settings_selected++;
+                if(key==SDL_CONTROLLER_BUTTON_A){
+                    if(settings_selected==SETTING_APPEARANCE){
+                        appearance_selected=0;
+                        page=APPEARANCE;
+                    }else if(settings_selected==SETTING_PLAYER){
                         selected_video_option=0;
                         video_settings_from_menu=1;
                         page=VIDEO_SETTINGS;
-                    }else if(settings_selected==3){autoplay_episodes=!autoplay_episodes;theme_save();}
-                    else if(settings_selected==4){ps5_download_selected=0;page=DOWNLOADS;}
-                    else if(settings_selected==5){
-                        ps5_wallpaper_selected=0;page=WALLPAPERS;
-                        wallpapers_open();
+                    }else if(settings_selected==SETTING_PROVIDERS){
+                        provider_settings_selected=0;
+                        message[0]=0;
+                        page=PROVIDER_SETTINGS;
+                    }else if(settings_selected==SETTING_LANGUAGE){
+                        ui_set_language(ui_language()==UI_ENGLISH?UI_UKRAINIAN:UI_ENGLISH);
+                        if(catalog_loader.mutex){
+                            SDL_LockMutex(catalog_loader.mutex);
+                            for(int i=0;i<HOME_SHELF_COUNT;i++) {
+                                home_shelves[i].state=1;
+                                home_shelves[i].error[0]=0;
+                            }
+                            home_cache_initialized=1;
+                            home_current_loaded=0;
+                            if(catalog_loader.cond)SDL_CondSignal(catalog_loader.cond);
+                            SDL_UnlockMutex(catalog_loader.mutex);
+                        }
+                        catalog_language_changed=1;
+                        message[0]=0;
+                        if(!theme_save())
+                            snprintf(message,sizeof(message),"%s",
+                                     TR("Не вдалося зберегти мову на SD-карті",
+                                        "Could not save the language to the SD card"));
                     }
+                }
+                continue;
+            }
+            if(page==PROVIDER_SETTINGS){
+                if(key==SDL_CONTROLLER_BUTTON_B || key==SDL_CONTROLLER_BUTTON_BACK){
+                    message[0]=0;
+                    page=SETTINGS;
+                }
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_UP && provider_settings_selected>0)
+                    provider_settings_selected--;
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN && provider_settings_selected<PROVIDER_COUNT-1)
+                    provider_settings_selected++;
+                if(key==SDL_CONTROLLER_BUTTON_A){
+                    enabled_providers^=1u<<(providers[provider_settings_selected].id-1);
+                    message[0]=0;
+                    if(!theme_save())
+                        snprintf(message,sizeof(message),TR("Не вдалося зберегти джерела на SD-карті","Could not save providers to the SD card"));
                 }
                 continue;
             }
