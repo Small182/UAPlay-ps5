@@ -133,6 +133,11 @@ static ImageData download_image(const char *path,CURL *curl,int *ssl_failed){
        TCP/TLS connection pool and TLS session cache across poster requests. */
     curl_easy_reset(curl);
     curl_easy_setopt(curl,CURLOPT_URL,url);
+#ifdef __PS5__
+    /* Verify HTTPS using the bundled public Mozilla roots. */
+    curl_easy_setopt(curl,CURLOPT_CAINFO,UAPLAY_ASSET("cacert.pem"));
+    curl_easy_setopt(curl,CURLOPT_IPRESOLVE,(long)CURL_IPRESOLVE_V4);
+#endif
     curl_easy_setopt(curl,CURLOPT_FOLLOWLOCATION,1L);
     curl_easy_setopt(curl,CURLOPT_CONNECTTIMEOUT,4L);
     curl_easy_setopt(curl,CURLOPT_TIMEOUT,7L);
@@ -157,6 +162,16 @@ static ImageData download_image(const char *path,CURL *curl,int *ssl_failed){
     *ssl_failed=result==CURLE_SSL_CONNECT_ERROR ||
                 result==CURLE_COULDNT_CONNECT ||
                 result==CURLE_OPERATION_TIMEDOUT;
+    #ifdef __PS5__
+    if(result!=CURLE_OK || code!=200){
+        /* Log status only; never persist a signed poster URL or API token. */
+        FILE *diag=fopen(UAPLAY_DATA_ROOT "/network.log","a");
+        if(diag){
+            fprintf(diag,"poster HTTPS: curl=%d, HTTP=%ld\n",(int)result,code);
+            fclose(diag);
+        }
+    }
+#endif
     if(result!=CURLE_OK || code!=200 || !data.used){
         free(data.data);data.data=NULL;data.used=0;
     }else disk_write(path,&data);
