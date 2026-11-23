@@ -47,6 +47,33 @@ typedef enum { CATALOG, DETAILS, SOURCES, PLAYER, SETTINGS,
                SEASONS, EPISODES, TRACK_PICKER, VIDEO_SETTINGS,
                IPTV_COUNTRIES, IPTV_CHANNELS, DOWNLOADS, WALLPAPERS } Page;
 
+/* Provider selection from UAPlay-nx/main v0.5.10. */
+static const struct {
+    int id;
+    UiText name;
+} providers[]={
+    {1,{"UAFlix","UAFlix"}},{2,{"UASerials","UASerials"}},{3,{"Eneyida","Eneyida"}},
+    {4,{"UAFilm","UAFilm"}},{5,{"UAKino","UAKino"}},{6,{"Mikai (аніме)","Mikai (anime)"}},
+    {7,{"AnimeON (аніме)","AnimeON (anime)"}}
+};
+enum { PROVIDER_COUNT=sizeof(providers)/sizeof(providers[0]),
+       MOVY_PROVIDER_BIT=1u<<(UAKINO_PROVIDER_MOVY-1),
+       LEGACY_PROVIDER_MASK=(1u<<UAKINO_PROVIDER_MOVY)-1u,
+       ALL_PROVIDERS=0x7fu };
+/* Bit positions follow the persisted provider IDs, including the slot
+   retired between AnimeON and Movy. */
+static unsigned enabled_providers=ALL_PROVIDERS;
+
+static int provider_for_row(int row){
+    if(row<0)return -1;
+    for(int i=0;i<PROVIDER_COUNT;i++)
+        if((enabled_providers & (1u<<(providers[i].id-1))) && row--==0)
+            return providers[i].id;
+    return -1;
+}
+
+
+static int selected_provider=0,provider_settings_selected=0;
 static Episode episodes[EPISODES_MAX];
 static int episode_count,season_ids[64],season_count,selected_season,selected_episode;
 static int active_episode_variant=-1;
@@ -175,30 +202,125 @@ static int sort_button_for_mode(int mode){
 }
 /* 0: Watch, 1: Add to favorites (details buttons). */
 static int details_button_focus=0;
-static int settings_selected=0,ui_accent_alt=0,source_mode=0;
+/* Settings and appearance palette from UAPlay-nx/main v0.5.10. */
+enum { SETTING_APPEARANCE, SETTING_PLAYER,
+       SETTING_PROVIDERS, SETTING_LANGUAGE, SETTING_COUNT };
+enum { APPEARANCE_THEME, APPEARANCE_ACCENT, APPEARANCE_WALLPAPERS,
+       APPEARANCE_DEFAULT, APPEARANCE_COUNT };
+enum { SETTINGS_Y=138, SETTINGS_ROW_STEP=81, SETTINGS_ROW_HEIGHT=64 };
+static int settings_selected=0,appearance_selected=0,source_mode=0;
+typedef struct {const char *uk,*en;unsigned rgb;} AccentPreset;
+/* Inspired by the Pantone swatch names in the reference screenshot. RGB
+   values are screen approximations, not official Pantone color conversions. */
+enum { ACCENT_SYSTEM, ACCENT_TURQUOISE, ACCENT_CYAN, ACCENT_YELLOW,
+       ACCENT_YELLOW_012, ACCENT_ORANGE_021, ACCENT_WARM_RED,
+       ACCENT_RED_032, ACCENT_RUBINE_RED, ACCENT_RHODAMINE_RED,
+       ACCENT_PURPLE, ACCENT_VIOLET, ACCENT_BLUE_072, ACCENT_REFLEX_BLUE,
+       ACCENT_PROCESS_BLUE, ACCENT_GREEN, ACCENT_BLACK, ACCENT_BRIGHT_RED,
+       ACCENT_PINK, ACCENT_MEDIUM_PURPLE, ACCENT_DARK_BLUE, ACCENT_WHITE };
+static const AccentPreset accent_presets[]={
+    {"Стандартний","Default",0},
+    {"Бірюзовий","Turquoise",0x3DD7BB},
+    {"Блакитний","Cyan",0x3BADE0},
+    {"Жовтий","Yellow",0xF5D100},
+    {"Жовтий 012","Yellow 012",0xFFD700},
+    {"Помаранчевий","Orange",0xFF6A00},
+    {"Теплий червоний","Warm Red",0xFF4438},
+    {"Червоний","Red",0xFF2247},
+    {"Рубіновий","Rubine Red",0xF50057},
+    {"Родаміновий","Rhodamine Red",0xF40CA7},
+    {"Пурпуровий","Purple",0xC72CC7},
+    {"Фіолетовий","Violet",0x6A0DAD},
+    {"Синій 072","Blue 072",0x100FB8},
+    {"Рефлекс синій","Reflex Blue",0x1326A8},
+    {"Процесний синій","Process Blue",0x1490D7},
+    {"Зелений","Green",0x12B89A},
+    {"Чорний","Black",0x2B1B14},
+    {"Яскраво-червоний","Bright Red",0xFF3B1A},
+    {"Рожевий","Pink",0xF42A9A},
+    {"Середній пурпур","Medium Purple",0x6A00A8},
+    {"Темно-синій","Dark Blue",0x1230B8},
+    {"Білий","White",0xFFFFFF}
+};
+#define ACCENT_COUNT ((int)(sizeof(accent_presets)/sizeof(accent_presets[0])))
+/* Keep all old preset IDs stable for persisted theme.txt settings, but
+   display only distinct swatches. Removed IDs migrate to closest colors. */
+static const int accent_visible[]={
+    ACCENT_TURQUOISE,ACCENT_CYAN,ACCENT_YELLOW,ACCENT_ORANGE_021,
+    ACCENT_WARM_RED,ACCENT_RED_032,ACCENT_RUBINE_RED,ACCENT_RHODAMINE_RED,
+    ACCENT_VIOLET,ACCENT_PROCESS_BLUE,ACCENT_GREEN,ACCENT_BLACK,
+    ACCENT_PINK,ACCENT_DARK_BLUE,ACCENT_WHITE
+};
+#define ACCENT_VISIBLE_COUNT ((int)(sizeof(accent_visible)/sizeof(accent_visible[0])))
+enum {ACCENT_COLS=5,ACCENT_GRID_X=32,ACCENT_GRID_Y=150,
+      ACCENT_STEP_X=247,ACCENT_STEP_Y=144,ACCENT_CARD_W=230,ACCENT_CARD_H=122};
+static int ui_accent_index=ACCENT_TURQUOISE,accent_selected=0;
+
+static int source_mode=0;
 static int autoplay_episodes=1;
 #define NEXT_EPISODE_DELAY_MS 3000u
 static int ui_light_theme=0,ui_theme_enabled=1,ui_gradient_pass=0;
 #define THEME_PATH UAPLAY_CATALOG_DIR "/theme.txt"
+#define THEME_TMP THEME_PATH ".tmp"
+#define THEME_BACKUP THEME_PATH ".bak"
 static void theme_load(void){
     FILE *f=fopen(THEME_PATH,"r");
+    if(!f)f=fopen(THEME_BACKUP,"r");
     if(f){
         ui_light_theme=fgetc(f)=='1';
-        /* Older installations have a one-character theme file. For those,
-           autoplay remains enabled by default. */
-        if(fgetc(f)=='0')autoplay_episodes=0;
+        int autoplay=fgetc(f);
+        if(autoplay=='0')autoplay_episodes=0;
+        /* Legacy files only store the theme and optionally autoplay. */
+        if(autoplay=='0' || autoplay=='1'){
+            unsigned mask;
+            if(fscanf(f," %u",&mask)==1 && mask<=LEGACY_PROVIDER_MASK){
+                enabled_providers=mask & ALL_PROVIDERS;
+                char language[8];
+                if(fscanf(f," %7s",language)==1 && !strcmp(language,"en"))
+                    ui_set_language(UI_ENGLISH);
+                /* Aether used the same bit before the Movy setting existed. */
+                char provider_version[8];
+                (void)fscanf(f," %7s",provider_version); /* Movy stays disabled. */
+                /* Optional trailing field. Existing theme.txt files still load
+                   with their original system accent as the default. */
+                int stored_accent=ACCENT_SYSTEM;
+                if(fscanf(f," %d",&stored_accent)!=1 ||
+                   stored_accent<0 || stored_accent>=ACCENT_COUNT)
+                    stored_accent=ACCENT_SYSTEM;
+                ui_accent_index=accent_upgrade(stored_accent);
+            }
+        }
         fclose(f);
     }
 }
-static void theme_save(void){
+static int theme_save(void){
+    mkdir(UAPLAY_DATA_ROOT,0777);
     mkdir(UAPLAY_CATALOG_DIR,0777);
-    FILE *f=fopen(THEME_PATH,"w");
-    if(f){
-        fputc(ui_light_theme?'1':'0',f);
-        fputc(autoplay_episodes?'1':'0',f);
-        fputc('\n',f);
-        fclose(f);
+    FILE *f=fopen(THEME_TMP,"w");
+    if(!f)return 0;
+    int written=fprintf(f,"%d%d\n%u\n%s\nmovy\n%d\n",ui_light_theme,autoplay_episodes,
+                        enabled_providers,TR("uk","en"),ui_accent_index);
+    if(fclose(f)!=0 || written<0){
+        remove(THEME_TMP);
+        return 0;
     }
+    /* FAT may reject replacing an existing file with rename(). */
+    struct stat previous;
+    int had_previous=stat(THEME_PATH,&previous)==0;
+    if(had_previous){
+        remove(THEME_BACKUP);
+        if(rename(THEME_PATH,THEME_BACKUP)!=0){
+            remove(THEME_TMP);
+            return 0;
+        }
+    }
+    if(rename(THEME_TMP,THEME_PATH)!=0){
+        if(had_previous)rename(THEME_BACKUP,THEME_PATH);
+        remove(THEME_TMP);
+        return 0;
+    }
+    remove(THEME_BACKUP);
+    return 1;
 }
 static int video_settings_from_menu=0;
 static int ui_category=0;
@@ -1140,24 +1262,30 @@ static void summary(Paint *p,const char *description,int x,int y,int width){
 static void card_title(Paint *p,const char *title,int x,int y,int width){
     wrapped(p,title,x,y,width,2,24,p->font_small,.95f,.96f,.98f);
 }
+static void accent_real(int preset,float *r,float *g,float *b){
+    if(preset<0 || preset>=ACCENT_COUNT)preset=ACCENT_SYSTEM;
+    unsigned rgb=preset==ACCENT_SYSTEM?
+                 (ui_light_theme?0x4465D5:0x3DD7BB):accent_presets[preset].rgb;
+    *r=((rgb>>16)&255)/255.f;
+    *g=((rgb>>8)&255)/255.f;
+    *b=(rgb&255)/255.f;
+}
 static void accent(float *r,float *g,float *b){
-    if(ui_light_theme){
-        /* Pre-inverted Switch blue; actual output approximately #4465D5. */
-        *r=.73f;*g=.60f;*b=.16f;
-        return;
+    accent_real(ui_accent_index,r,g,b);
+    /* Neutral palette accents need dark text contrast on white panels.
+       The separate selection ring displays the actual white swatch. */
+    if(ui_light_theme && ui_accent_index==ACCENT_WHITE){
+        *r=*g=*b=.87f;
+    }else if(ui_light_theme){
+        *r=1.f-*r;*g=1.f-*g;*b=1.f-*b;
     }
-    /* Basic Black uses mint/turquoise for active items. */
-    *r=ui_accent_alt?.23f:.24f;
-    *g=ui_accent_alt?.68f:.84f;
-    *b=ui_accent_alt?.88f:.73f;
 }
 static Uint32 ui_press_at=0;
+/* Focus colors now follow the user's saved 0.5.10 palette, including white/black. */
 static void selection_frame(Paint *p,int x,int y,int w,int h){
     /* A single rounded SDF ring tracks the underlying button/card corners.
        Separate rectangular strokes left square joints on the Switch UI. */
-    float r=ui_light_theme?.69f:.20f;
-    float g=ui_light_theme?.13f:.67f;
-    float b=ui_light_theme?.20f:.85f;
+    float r,g,b;accent(&r,&g,&b);
     int radius=h>=60?18:h>=40?17:12;
     ui_outline_width=3;
     float opacity=.94f+.06f*sinf(SDL_GetTicks()*.005f);
