@@ -1,9 +1,9 @@
-name: UAPlay native PS5 VideoOut + updated Switch features
+name: UAPlay native PS5 VideoOut + network fix + QWERTY
 
 on:
   workflow_dispatch:
   push:
-    branches: [native-ps5, fw13-exfat, fw13-ui-fixes-sync]
+    branches: [native-ps5, fw13-exfat, fw13-ui-fixes-sync, fw13-native-network-v0510]
     paths:
       - 'source/**'
       - 'ps5/**'
@@ -29,6 +29,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang-18 lld-18 ccache git curl wget unzip rsync \
             build-essential pkg-config python3 cmake ninja-build libcurl4-openssl-dev ca-certificates exfatprogs exfat-fuse fuse3
+      - name: Check Switch 0.5.10 source version and native networking glue
+        run: |
+          set -euo pipefail
+          cmp source/version.h switch-upstream/source/version.h
+          grep -q '"0.5.10"' source/version.h
+          grep -q 'int getaddrinfo(' source/console_curl.c
+          grep -q '__wrap_fcntl' source/console_curl.c
+          grep -q 'console_curl_setup(curl)' source/catalog.c
+          grep -q 'console_curl_setup(curl)' source/posters.c
+          python3 -m py_compile scripts/patch-ps5-linker.py
       - name: Verify portable catalogue behavior
         run: bash scripts/test-portable.sh
       - name: Retrieve pinned native title runtime
