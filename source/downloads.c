@@ -4,6 +4,9 @@
 
 #include <SDL.h>
 #include <curl/curl.h>
+#ifdef __PS5__
+#include "console_curl.h"
+#endif
 #include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -71,7 +74,13 @@ static void net_profile_record(char kind, void *curl, const char *url,
     (void)kind; (void)curl; (void)url; (void)waited;
     (void)result; (void)bytes; (void)error;
 }
-static void net_tls_options(void *curl) { (void)curl; }
+static void net_tls_options(void *curl) {
+#ifdef __PS5__
+    if(curl)console_curl_setup((CURL *)curl);
+#else
+    (void)curl;
+#endif
+}
 void downloads_pause(int paused) { SDL_AtomicSet(&downloads_paused_flag, paused != 0); }
 #else
 void downloads_pause(int paused) { net_background_pause(paused); }
