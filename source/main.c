@@ -1274,10 +1274,12 @@ static void footer(Paint *p,const char *message) {
         HINT("↑↓","Доріжка");HINT("A","Застосувати");HINT("B","Назад");
     }else if(footer_page==VIDEO_SETTINGS){
         HINT("↑↓","Параметр");HINT("←→","Змінити");HINT("B","Назад");
+    }else if(footer_page==SOURCES){
+        HINT("A","Відкрити");HINT("X","Завантажити");HINT("B","Назад");
     }else if(footer_page==SEASONS){
         HINT("↑↓","Сезон");HINT("A","Серії");HINT("B","Назад");
     }else if(footer_page==EPISODES){
-        HINT("↑↓","Серія");HINT("A","Дивитися");HINT("B","Назад");
+        HINT("↑↓","Серія");HINT("A","Дивитися");HINT("X","Завантажити");HINT("B","Назад");
     }else{
         HINT("↑↓","Вибір");HINT("A","Відкрити");HINT("B","Назад");
     }
@@ -1580,8 +1582,8 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
         footer(p,status);
     } else if(page==SETTINGS){
         screen_header(p,"Налаштування","UAPlay");
-        const char *items[]={"Тема","Інтерфейс","Плеєр","Автовідтворення"};
-        for(int i=0;i<4;i++){
+        const char *items[]={"Тема","Інтерфейс","Плеєр","Автовідтворення","Завантаження"};
+        for(int i=0;i<5;i++){
             int y=136+i*88;
             box_alpha(p,32,y,417,72,i==settings_selected?.20f:.09f,
                       i==settings_selected?.29f:.11f,
@@ -1604,14 +1606,17 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
             else snprintf(description,sizeof(description),"Акцент: %s",ui_accent_alt?"Блакитний":"Бірюзовий");
         }
         else if(settings_selected==2)snprintf(description,sizeof(description),"Швидкість: %.2f · гучність: %.0f",video_options[0],video_options[1]);
-        else snprintf(description,sizeof(description),"Наступна серія: %s",autoplay_episodes?"Автоматично":"Вручну");
+        else if(settings_selected==3)snprintf(description,sizeof(description),"Наступна серія: %s",autoplay_episodes?"Автоматично":"Вручну");
+        else snprintf(description,sizeof(description),"Завантаження відео та керування чергою");
         text(p,description,516,255,682);
         const char *help[]={"Перемикає темну та світлу теми. Вибір зберігається на SD-карті.",
             "Змінює колір виділення на всіх екранах.",
             "Налаштуйте відео, гучність та субтитри.",
-            "Після завершення серії пропонує наступну через 3 секунди. Кнопка B скасовує перехід. Вибір зберігається."};
+            "Після завершення серії пропонує наступну через 3 секунди. Кнопка B скасовує перехід. Вибір зберігається.",
+            "Призупинення, відновлення й видалення завантажень."};
         wrapped(p,help[settings_selected],517,315,675,3,29,p->font_small,.73f,.78f,.84f);
-        button(p,settings_selected==2?"Відкрити параметри":"Змінити",515,537,258,55,1);
+        button(p,settings_selected==2?"Відкрити параметри":
+               settings_selected==4?"Відкрити завантаження":"Змінити",515,537,258,55,1);
         footer(p,status);
     } else if (page==DETAILS) {
         screen_header(p,movies[chosen].series?"Про серіал":"Про фільм","UAPlay");
@@ -2557,9 +2562,9 @@ int main(void) {
                         key=tx<640?SDL_CONTROLLER_BUTTON_DPAD_LEFT:SDL_CONTROLLER_BUTTON_DPAD_RIGHT;
                     }else if(ty<92 && tx<100)key=SDL_CONTROLLER_BUTTON_B;
                 }else if(page==SETTINGS){
-                    if(tx>=32 && tx<449 && ty>=136 && ty<472 && (ty-136)%88<72){
+                    if(tx>=32 && tx<449 && ty>=136 && ty<560 && (ty-136)%88<72){
                         settings_selected=(ty-136)/88;
-                        if(settings_selected>=4)settings_selected=3;
+                        if(settings_selected>=5)settings_selected=4;
                         key=SDL_CONTROLLER_BUTTON_A;
                     }else if(ty>=537 && ty<592 && tx>=515 && tx<773)key=SDL_CONTROLLER_BUTTON_A;
                     else if(ty<92 && tx<100)key=SDL_CONTROLLER_BUTTON_B;
@@ -2804,6 +2809,23 @@ int main(void) {
                 continue;
             }
             if(page==EPISODES){
+                if(key==SDL_CONTROLLER_BUTTON_X){
+                    Episode *episode=selected_episode_item();
+                    if(episode){
+                        Source stream={0};
+                        snprintf(stream.url,sizeof(stream.url),"%s",episode->url);
+                        char resolved[2048]={0};message[0]=0;
+                        if(uakino_resolve(&stream,resolved,sizeof(resolved),
+                                          message,sizeof(message))){
+                            int queued=downloads_add(&movies[chosen],episode->season,
+                                                     episode->number,episode->title,resolved);
+                            snprintf(message,sizeof(message),
+                                     queued==1?"Серію додано до завантажень":queued==0?
+                                     "Серія вже є в черзі":"Черга завантажень заповнена");
+                        }
+                    }
+                    continue;
+                }
                 if(key==SDL_CONTROLLER_BUTTON_B)page=SEASONS;
                 if(key==SDL_CONTROLLER_BUTTON_DPAD_UP && selected_episode>0)selected_episode--;
                 if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN &&
@@ -2842,7 +2864,7 @@ int main(void) {
             if(page==SETTINGS){
                 if(key==SDL_CONTROLLER_BUTTON_B || key==SDL_CONTROLLER_BUTTON_BACK){page=CATALOG;continue;}
                 if(key==SDL_CONTROLLER_BUTTON_DPAD_UP && settings_selected>0)settings_selected--;
-                if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN && settings_selected<3)settings_selected++;
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN && settings_selected<4)settings_selected++;
                 if(key==SDL_CONTROLLER_BUTTON_A){
                     if(settings_selected==0){ui_light_theme=!ui_light_theme;theme_save();}
                     else if(settings_selected==1)ui_accent_alt=!ui_accent_alt;
@@ -2851,6 +2873,7 @@ int main(void) {
                         video_settings_from_menu=1;
                         page=VIDEO_SETTINGS;
                     }else if(settings_selected==3){autoplay_episodes=!autoplay_episodes;theme_save();}
+                    else if(settings_selected==4){ps5_download_selected=0;page=DOWNLOADS;}
                 }
                 continue;
             }
@@ -3111,6 +3134,16 @@ int main(void) {
                 if(key==SDL_CONTROLLER_BUTTON_B){page=DETAILS;message[0]=0;}
                 if(key==SDL_CONTROLLER_BUTTON_DPAD_UP && source>0)source--;
                 if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN && source<sn-1)source++;
+                if(key==SDL_CONTROLLER_BUTTON_X && sn && !movies[chosen].series){
+                    char url[2048]={0};message[0]=0;
+                    if(uakino_resolve(&sources[source],url,sizeof(url),message,sizeof(message))){
+                        int queued=downloads_add(&movies[chosen],0,0,NULL,url);
+                        snprintf(message,sizeof(message),
+                                 queued==1?"Додано до завантажень":queued==0?
+                                 "Файл уже є в черзі":"Черга завантажень заповнена");
+                    }
+                    continue;
+                }
                 if(key==SDL_CONTROLLER_BUTTON_A && sn){
                     active_episode_variant=-1;
                     if(movies[chosen].series){
@@ -3246,6 +3279,9 @@ int main(void) {
            and auto-sleep only for the duration of video playback. */
         int watching_video=(page==PLAYER || page==TRACK_PICKER ||
                             (page==VIDEO_SETTINGS && !video_settings_from_menu));
+        #ifdef UAPLAY_PS5_SOFTWARE
+        downloads_pause(watching_video);
+#endif
         if(watching_video!=media_playback_mode){
 #ifdef __SWITCH__
             appletSetMediaPlaybackState(watching_video!=0);
