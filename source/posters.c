@@ -2,20 +2,16 @@
 
 #include <SDL.h>
 #include <SDL_image.h>
-#if defined(__PS5__) && !defined(UAPLAY_PS5_SOFTWARE)
-#define GL_GLEXT_PROTOTYPES 1
-#include <GL/glcorearb.h>
-#endif
 #include <curl/curl.h>
 #ifdef __PS5__
 #include "console_curl.h"
 #endif
+#include "platform_paths.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include "platform_paths.h"
 
 /* Reduce GPU memory from up to roughly 80 MB to about 30 MB. */
 #define POSTER_CACHE_MAX 48
@@ -33,8 +29,9 @@
 #define POSTER_DISK_MAGIC 0x55415032u
 
 typedef struct {
-    int id;
+    uint64_t id;
     UiTexture texture;
+    int width,height;
     Uint32 retry_after;
     unsigned long long last_used;
 } PosterEntry;
@@ -44,10 +41,12 @@ typedef struct {
     SDL_Thread *thread;
     SDL_mutex *mutex;
     SDL_cond *cond;
-    int quit,pending,busy,request_id;
+    int quit,pending,busy;
+    uint64_t request_id;
     Uint32 blocked_until;
-    char request_path[256];
-    int ready,completed_id;
+    char request_path[1024];
+    int ready;
+    uint64_t completed_id;
     ImageData completed_image;
 } PosterLoader;
 
@@ -126,27 +125,31 @@ static void disk_write(const char *path,const ImageData *image){
 static ImageData download_image(const char *path,CURL *curl,int *ssl_failed){
     ImageData data={0};
     *ssl_failed=0;
-    if(!path || path[0]!='/' || strstr(path,".."))return data;
+    int external=!strncmp(path,"https://",8) || !strncmp(path,"http://",7);
+    if(!external && (path[0]!='/' || strstr(path,"..")))return data;
     data=disk_read(path);
     if(data.used)return data;
     if(!curl)return data;
-    char url[512];
-    snprintf(url,sizeof(url),"https://image.tmdb.org/t/p/w342%s",path);
+    char url[1100];
+    snprintf(url,sizeof(url),external?"%s":"https://image.tmdb.org/t/p/w342%s",path);
     /* Reset request-specific options but preserve the handle's persistent
        TCP/TLS connection pool and TLS session cache across poster requests. */
     curl_easy_reset(curl);
 #ifdef __PS5__
     console_curl_setup(curl);
-#endif
-    curl_easy_setopt(curl,CURLOPT_URL,url);
-#ifdef __PS5__
-    /* Verify HTTPS using the bundled public Mozilla roots. */
     curl_easy_setopt(curl,CURLOPT_CAINFO,UAPLAY_ASSET("cacert.pem"));
     curl_easy_setopt(curl,CURLOPT_IPRESOLVE,(long)CURL_IPRESOLVE_V4);
 #endif
+    curl_easy_setopt(curl,CURLOPT_URL,url);
     curl_easy_setopt(curl,CURLOPT_FOLLOWLOCATION,1L);
-    curl_easy_setopt(curl,CURLOPT_CONNECTTIMEOUT,4L);
-    curl_easy_setopt(curl,CURLOPT_TIMEOUT,7L);
+    curl_easy_setopt(curl,CURLOPT_MAXREDIRS,4L);
+#if LIBCURL_VERSION_NUM >= 0x075500
+    curl_easy_setopt(curl,CURLOPT_REDIR_PROTOCOLS_STR,"http,https");
+#else
+    curl_easy_setopt(curl,CURLOPT_REDIR_PROTOCOLS,(long)(CURLPROTO_HTTP|CURLPROTO_HTTPS));
+#endif
+    curl_easy_setopt(curl,CURLOPT_CONNECTTIMEOUT,external?10L:4L);
+    curl_easy_setopt(curl,CURLOPT_TIMEOUT,external?15L:7L);
     curl_easy_setopt(curl,CURLOPT_NOSIGNAL,1L);
     curl_easy_setopt(curl,CURLOPT_HTTP_VERSION,CURL_HTTP_VERSION_1_1);
     curl_easy_setopt(curl,CURLOPT_TCP_KEEPALIVE,1L);
@@ -165,19 +168,15 @@ static ImageData download_image(const char *path,CURL *curl,int *ssl_failed){
     }
     long code=0;
     curl_easy_getinfo(curl,CURLINFO_RESPONSE_CODE,&code);
+#ifdef __PS5__
+    if(result!=CURLE_OK || code!=200){
+        FILE *diag=fopen(UAPLAY_DATA_ROOT "/network.log","a");
+        if(diag){fprintf(diag,"poster HTTP=%ld curl=%d\n",code,(int)result);fclose(diag);}
+    }
+#endif
     *ssl_failed=result==CURLE_SSL_CONNECT_ERROR ||
                 result==CURLE_COULDNT_CONNECT ||
                 result==CURLE_OPERATION_TIMEDOUT;
-    #ifdef __PS5__
-    if(result!=CURLE_OK || code!=200){
-        /* Log status only; never persist a signed poster URL or API token. */
-        FILE *diag=fopen(UAPLAY_DATA_ROOT "/network.log","a");
-        if(diag){
-            fprintf(diag,"poster HTTPS: curl=%d, HTTP=%ld\n",(int)result,code);
-            fclose(diag);
-        }
-    }
-#endif
     if(result!=CURLE_OK || code!=200 || !data.used){
         free(data.data);data.data=NULL;data.used=0;
     }else disk_write(path,&data);
@@ -192,9 +191,9 @@ static int download_worker(void *opaque){
         while(!task->quit && !task->pending)
             SDL_CondWait(task->cond,task->mutex);
         if(task->quit){SDL_UnlockMutex(task->mutex);break;}
-        char path[256];
+        char path[1024];
         snprintf(path,sizeof(path),"%s",task->request_path);
-        int id=task->request_id;
+        uint64_t id=task->request_id;
         task->pending=0;task->busy=1;
         SDL_UnlockMutex(task->mutex);
 
@@ -204,7 +203,7 @@ static int download_worker(void *opaque){
 
         SDL_LockMutex(task->mutex);
         task->busy=0;
-        if(ssl_failed)
+        if(ssl_failed && path[0]=='/')
             task->blocked_until=SDL_GetTicks()+POSTER_TLS_COOLDOWN_MS;
         if(!task->quit){
             task->completed_image=image;
@@ -233,69 +232,56 @@ void posters_init(void){
     }
 }
 
-static UiTexture image_texture(const ImageData *data){
-    if(!data->data || !data->used)return 0;
+UiTexture ui_texture_create(SDL_Surface *surface){
+    if(!surface || !ui_renderer)return 0;
+    SDL_Texture *texture=SDL_CreateTextureFromSurface(ui_renderer,surface);
+    if(texture)SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);
+    return (UiTexture)(uintptr_t)texture;
+}
+void ui_texture_destroy(UiTexture texture){
+    if(texture)SDL_DestroyTexture((SDL_Texture*)(uintptr_t)texture);
+}
+
+static UiTexture image_texture(const ImageData *data,int *width,int *height){
+    if(width)*width=0;
+    if(height)*height=0;
+    if(!data || !data->data || !data->used)return 0;
     SDL_RWops *rw=SDL_RWFromConstMem(data->data,(int)data->used);
     SDL_Surface *image=rw?IMG_Load_RW(rw,1):NULL;
     if(!image)return 0;
     SDL_Surface *rgba=SDL_ConvertSurfaceFormat(image,SDL_PIXELFORMAT_ABGR8888,0);
     SDL_FreeSurface(image);
     if(!rgba)return 0;
-    UiTexture texture=ui_texture_create(rgba);
+    if(rgba->w>1024 || rgba->h>1024){
+        int longest=rgba->w>rgba->h?rgba->w:rgba->h;
+        int w=(int)(rgba->w*1024LL/longest);
+        int h=(int)(rgba->h*1024LL/longest);
+        SDL_Surface *small=SDL_CreateRGBSurfaceWithFormat(0,w?w:1,h?h:1,
+                                              32,SDL_PIXELFORMAT_ABGR8888);
+        SDL_SetSurfaceBlendMode(rgba,SDL_BLENDMODE_NONE);
+        int ok=small?SDL_BlitScaled(rgba,NULL,small,NULL):-1;
+        SDL_FreeSurface(rgba);
+        rgba=small;
+        if(ok<0){if(rgba)SDL_FreeSurface(rgba);return 0;}
+    }
+    if(width)*width=rgba->w;
+    if(height)*height=rgba->h;
+    UiTexture result=ui_texture_create(rgba);
     SDL_FreeSurface(rgba);
-    return texture;
+    return result;
 }
 
-UiTexture ui_texture_create(SDL_Surface *rgba){
-#if defined(__PS4__) || defined(UAPLAY_PS5_SOFTWARE)
-    if(ui_renderer){
-        SDL_Texture *texture=SDL_CreateTextureFromSurface(ui_renderer,rgba);
-        if(texture)SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);
-        return (UiTexture)texture;
-    }
-#endif
-#ifdef UAPLAY_PS5_SOFTWARE
-    return 0;
-#else
-    GLuint texture=0;
-    glGenTextures(1,&texture);
-    if(texture){
-        glBindTexture(GL_TEXTURE_2D,texture);
-        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
-        glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,rgba->w,rgba->h,
-                     0,GL_RGBA,GL_UNSIGNED_BYTE,rgba->pixels);
-    }
-    return texture;
-#endif
-}
-
-void ui_texture_destroy(UiTexture texture){
-    if(!texture)return;
-#if defined(__PS4__) || defined(UAPLAY_PS5_SOFTWARE)
-    if(ui_renderer){
-        SDL_DestroyTexture((SDL_Texture *)texture);
-        return;
-    }
-#endif
-#ifndef UAPLAY_PS5_SOFTWARE
-    GLuint gl_texture=(GLuint)texture;
-    glDeleteTextures(1,&gl_texture);
-#endif
-}
-
-static void cache_store(int id,UiTexture texture){
+static void cache_store(uint64_t id,UiTexture texture,int width,int height){
     int slot=used;
     if(used==POSTER_CACHE_MAX){
         slot=0;
         for(int i=1;i<used;i++)
             if(cache[i].last_used<cache[slot].last_used)slot=i;
-        ui_texture_destroy(cache[slot].texture);
+        if(cache[slot].texture)ui_texture_destroy(cache[slot].texture);
     }else used++;
     cache[slot].id=id;
     cache[slot].texture=texture;
+    cache[slot].width=width;cache[slot].height=height;
     cache[slot].retry_after=texture?0:SDL_GetTicks()+POSTER_RETRY_DELAY_MS;
     cache[slot].last_used=++cache_clock;
 }
@@ -307,18 +293,19 @@ static void collect_completed(void){
         SDL_LockMutex(task->mutex);
         if(!task->ready){SDL_UnlockMutex(task->mutex);continue;}
         ImageData image=task->completed_image;
-        int id=task->completed_id;
+        uint64_t id=task->completed_id;
         task->completed_image=(ImageData){0};
         task->ready=0;
         SDL_UnlockMutex(task->mutex);
-        UiTexture texture=image_texture(&image);
+        int width=0,height=0;
+        UiTexture texture=image_texture(&image,&width,&height);
         free(image.data);
         /* A failed request is remembered to prevent a network retry loop. */
-        cache_store(id,texture);
+        cache_store(id,texture,width,height);
     }
 }
 
-static int already_cached(int id){
+static int already_cached(uint64_t id){
     for(int i=0;i<used;i++)if(cache[i].id==id){
         if(!cache[i].texture && SDL_TICKS_PASSED(SDL_GetTicks(),cache[i].retry_after)){
             cache[i].id=0;
@@ -328,7 +315,7 @@ static int already_cached(int id){
     }
     return 0;
 }
-static int in_flight(int id){
+static int in_flight(uint64_t id){
     for(int i=0;i<POSTER_WORKERS;i++){
         PosterLoader *task=&loaders[i];
         if(!task->mutex)continue;
@@ -340,10 +327,9 @@ static int in_flight(int id){
     }
     return 0;
 }
-static int request_poster(const Movie *movie){
-    int id=movie->series?-movie->id:movie->id;
-    if(!movie->poster[0] || !strcmp(movie->poster,"null") ||
-       already_cached(id) || in_flight(id))return 0;
+static int request_image(const char *path,uint64_t id){
+    if(!path || !*path || !strcmp(path,"null") ||
+       strlen(path)>=sizeof(loaders[0].request_path) || already_cached(id) || in_flight(id))return 0;
     for(int i=0;i<POSTER_WORKERS;i++){
         PosterLoader *task=&loaders[i];
         if(!task->thread)continue;
@@ -352,7 +338,7 @@ static int request_poster(const Movie *movie){
            (!task->blocked_until || SDL_TICKS_PASSED(SDL_GetTicks(),task->blocked_until))){
             task->request_id=id;
             snprintf(task->request_path,sizeof(task->request_path),
-                     "%s",movie->poster);
+                     "%s",path);
             task->pending=1;
             SDL_CondSignal(task->cond);
             SDL_UnlockMutex(task->mutex);
@@ -363,10 +349,9 @@ static int request_poster(const Movie *movie){
     return 0;
 }
 
-UiTexture poster_texture(const Movie *movie,int *budget){
-    if(!movie || !movie->poster[0] || !strcmp(movie->poster,"null"))return 0;
+static UiTexture cached_texture(const char *path,uint64_t identity,int *budget,int *width,int *height){
+    if(!path || !*path || !strcmp(path,"null"))return 0;
     collect_completed();
-    int identity=movie->series?-movie->id:movie->id;
     for(int i=0;i<used;i++){
         if(cache[i].id==identity){
             if(!cache[i].texture &&
@@ -375,11 +360,27 @@ UiTexture poster_texture(const Movie *movie,int *budget){
                 break;
             }
             cache[i].last_used=++cache_clock;
+            if(width)*width=cache[i].width;
+            if(height)*height=cache[i].height;
             return cache[i].texture;
         }
     }
-    if(budget && *budget>0 && request_poster(movie))--*budget;
+    if(budget && *budget>0 && request_image(path,identity))--*budget;
     return 0;
+}
+
+static uint64_t movie_identity(const Movie *movie){
+    return (uint64_t)(uint32_t)(movie->series?-movie->id:movie->id);
+}
+
+UiTexture poster_texture(const Movie *movie,int *budget){
+    return movie?cached_texture(movie->poster,movie_identity(movie),budget,NULL,NULL):0;
+}
+
+UiTexture logo_texture(const char *url,int *budget,int *width,int *height){
+    if(!url || !*url)return 0;
+    uint64_t key=path_fingerprint(url) | (UINT64_C(1)<<63);
+    return cached_texture(url,key,budget,width,height);
 }
 
 void posters_prefetch(const Movie *movies,int count,int start,int ahead){
@@ -389,7 +390,7 @@ void posters_prefetch(const Movie *movies,int count,int start,int ahead){
     if(end>count)end=count;
     /* Only fill idle network slots. Visible poster requests are submitted by
        draw() first and always take precedence over speculative prefetches. */
-    for(int i=start;i<end;i++)request_poster(&movies[i]);
+    for(int i=start;i<end;i++)request_image(movies[i].poster,movie_identity(&movies[i]));
 }
 
 void posters_destroy(void){
@@ -412,6 +413,6 @@ void posters_destroy(void){
     if(disk_mutex)SDL_DestroyMutex(disk_mutex);
     disk_mutex=NULL;
     for(int i=0;i<used;i++)
-        ui_texture_destroy(cache[i].texture);
+        if(cache[i].texture)ui_texture_destroy(cache[i].texture);
     used=0;cache_clock=0;
 }
