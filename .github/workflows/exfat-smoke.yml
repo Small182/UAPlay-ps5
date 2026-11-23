@@ -17,7 +17,7 @@ jobs:
     timeout-minutes: 12
     env:
       PS5_TITLE_ID: PPSA99283
-      PS5_NATIVE_OUTPUT: ${{ runner.temp }}/uaplay-exfat-smoke
+      PS5_NATIVE_OUTPUT: /tmp/uaplay-exfat-smoke
     steps:
       - uses: actions/checkout@v4
       - name: Install image tools
