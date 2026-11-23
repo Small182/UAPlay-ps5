@@ -139,6 +139,7 @@ typedef struct {
     Movie items[CATALOG_PAGE_SIZE];
     int count;
     int state; /* 0 unknown, 1 queued, 2 loading, 3 ready */
+    char error[192]; /* latest TMDb request failure; preserve on empty shelf */
 } HomeShelf;
 static HomeShelf home_shelves[HOME_SHELF_COUNT];
 static int home_shelf=0,home_cache_initialized=0,home_current_loaded=0;
@@ -306,6 +307,8 @@ static int catalog_worker(void *opaque){
             SDL_LockMutex(loader->mutex);
             if(!loader->quit){
                 home_shelves[shelf].count=count;
+                snprintf(home_shelves[shelf].error,sizeof(home_shelves[shelf].error),
+                         "%s",count==0?error:"");
                 if(count>0)memcpy(home_shelves[shelf].items,batch,
                                   (size_t)count*sizeof(Movie));
                 home_shelves[shelf].state=3;
@@ -382,6 +385,7 @@ static void catalog_home_prime(const Movie *movies,int count){
     SDL_LockMutex(loader->mutex);
     if(count>CATALOG_PAGE_SIZE)count=CATALOG_PAGE_SIZE;
     home_shelves[0].count=count;
+    home_shelves[0].error[0]=0;
     if(count>0)memcpy(home_shelves[0].items,movies,(size_t)count*sizeof(Movie));
     home_shelves[0].state=3;
     for(int i=1;i<HOME_SHELF_COUNT;i++)home_shelves[i].state=1;
@@ -390,11 +394,13 @@ static void catalog_home_prime(const Movie *movies,int count){
     if(loader->cond)SDL_CondSignal(loader->cond);
     SDL_UnlockMutex(loader->mutex);
 }
-static int catalog_home_copy(int shelf,Movie *movies){
+static int catalog_home_copy(int shelf,Movie *movies,char *error,size_t error_size){
     CatalogLoader *loader=&catalog_loader;
     if(!loader->mutex || shelf<0 || shelf>=HOME_SHELF_COUNT)return -1;
     SDL_LockMutex(loader->mutex);
     int count=home_shelves[shelf].state==3?home_shelves[shelf].count:-1;
+    if(error && error_size && count>=0)
+        snprintf(error,error_size,"%s",home_shelves[shelf].error);
     if(count>0)memcpy(movies,home_shelves[shelf].items,(size_t)count*sizeof(Movie));
     SDL_UnlockMutex(loader->mutex);
     return count;
@@ -485,12 +491,12 @@ static int load_category(int category,const char *query,Movie *movies,char *mess
     previous_category=data_category;
     snprintf(previous_query,sizeof(previous_query),"%s",query);
     if(category==0 && !query[0] && home_cache_initialized){
-        int cached=catalog_home_copy(home_shelf,movies);
+        int cached=catalog_home_copy(home_shelf,movies,message,(size_t)size);
         home_current_loaded=cached>=0;
         if(cached<0){
             snprintf(message,(size_t)size,"Завантаження добірки...");
             cached=0;
-        }else message[0]=0;
+        }
         catalog_loader_reset(data_category,query,cached,0);
         return cached;
     }
@@ -2396,6 +2402,10 @@ int main(void) {
     CURLcode curl_status=curl_global_init(CURL_GLOBAL_DEFAULT);
     if(curl_status!=CURLE_OK){
         ps5_boot_trace("curl initialization failed",curl_easy_strerror(curl_status));
+        draw(&paint,CATALOG,NULL,0,0,NULL,0,0,home_headings[0],
+             "Помилка ініціалізації мережі. Перевірте native-boot.log");
+        present_ui(window);
+        SDL_Delay(3500);
         exit_code=5;
         goto cleanup_paint;
     }
@@ -3535,9 +3545,9 @@ int main(void) {
         catalog_details_poll(movies,n);
         if(page==CATALOG && category==0 && !expanded_catalog && !query[0] &&
            !home_current_loaded){
-            int count=catalog_home_copy(home_shelf,movies);
+            int count=catalog_home_copy(home_shelf,movies,message,sizeof(message));
             if(count>=0){
-                n=count;chosen=0;home_current_loaded=1;message[0]=0;
+                n=count;chosen=0;home_current_loaded=1;
             }
         }
         /* While the user watches a video without touching the controls, the
