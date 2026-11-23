@@ -6,6 +6,9 @@
 #include <SDL.h>
 #include <SDL_image.h>
 #include <curl/curl.h>
+#ifdef __PS5__
+#include "console_curl.h"
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -82,6 +85,9 @@ static size_t receive(char *data,size_t size,size_t n,void *opaque) {
 
 static void curl_setup(CURL *curl,const char *url) {
     curl_easy_reset(curl);
+#ifdef __PS5__
+    console_curl_setup(curl);
+#endif
     curl_easy_setopt(curl,CURLOPT_URL,url);
 #ifdef __PS5__
     curl_easy_setopt(curl,CURLOPT_CAINFO,UAPLAY_CA_BUNDLE);
