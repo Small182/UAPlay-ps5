@@ -1,63 +1,33 @@
-# UAPlay-PS5
+# UAPlay PS5 — native port (experimental)
 
-Experimental **native PlayStation 5 homebrew port** of [UAPlay-nx](https://github.com/Small182/UAPlay-nx).
+Native homebrew port of [UAPlay-nx](https://github.com/Small182/UAPlay-nx) to the PlayStation 5. The **Switch repository is not modified**.
 
-> **Work in progress — native PS5 source port, not yet verified on hardware.**
+**Branch:** `fw13-exfat` (based on the existing native `native-ps5` VideoOut branch). **Status:** untested on physical PS5 firmware 13.00; not a stable release.
 
-The goal is to retain the Switch app's catalogue, details, favorites, streaming-source discovery and visual layout, changing only the controller hints and platform-specific runtime.
+## Native implementation
 
-## Controller legend
+- Ported SDL-based UAPlay C catalogue and interface with PlayStation controller labels.
+- Native PS5 VideoOut software renderer, avoiding the earlier OpenGL/EVO boot experiments.
+- FFmpeg/SDL_kitchensink playback adapter (video, audio and seeking); on-console codecs, TLS/HLS and DualSense remain unverified.
+- Native title folder `PPSA99283` containing `eboot.bin`, runtime modules, title metadata and UAPlay fonts/assets.
+- GitHub Actions cross-compilation and ShadowMountPlus-compatible **64 KiB cluster exFAT** packaging. A separate lightweight packaging smoke test verifies image readback and exFAT boot-sector geometry.
 
-| Switch UI | PlayStation UI |
-| --- | --- |
-| A | ✕ (Cross) |
-| B | ◯ (Circle) |
-| X | □ (Square) |
-| Y | △ (Triangle) |
-| L / R | L1 / R1 |
-| − | OPTIONS |
+## Build artifacts
 
-## Native port groundwork on `native-sdl`
+Open [GitHub Actions](https://github.com/Small182/UAPlay-ps5/actions), select **UAPlay native PS5 VideoOut + ShadowMount exFAT** on branch `fw13-exfat`, then select a **successful** run:
 
-- Imported C sources, bundled assets, metadata snapshots, fonts and tests.
-- Started `__PS5__` guards and PS5 storage paths (`/download0/uaplay`).
-- Initial PlayStation button hint mapping.
-- OpenGL Core-profile shader port of the actual UAPlay renderer.
-- SDL_kitchensink/FFmpeg playback adapter using native OpenGL + SDL audio;
-  no browser, EVO or Nuvio frontend.
-- A pinned-source GitHub Actions native cross-build, with portable C
-  regression tests. The complete executable successfully compiled in
-  [run 42918448050](https://github.com/Small182/UAPlay-ps5/actions/runs/42918448050).
+- `UAPlay-PS5-Folder-UNTESTED`: native title folder tar.gz.
+- `UAPlay-PS5-VideoOut-UNTESTED`: UFS2 `PPSA99283.ffpkg`.
+- `UAPlay-PS5-exFAT-FW13-UNTESTED`: `PPSA99283.exfat`, 64 KiB clusters.
 
-## What still needs verification
+GitHub Actions may package a binary without it being compatible with a specific console firmware. **Do not mistake an artifact or green CI check for confirmed launch or playable streaming.**
 
-- Actual loading of the successfully cross-linked native executable on PS5.
-- Actual video/audio and HLS playback on firmware 13.60.
-- Full subtitles, codec controls and provider-specific HTTP header handling.
-- PS5 on-screen keyboard (search entry is not yet functional).
-- Real console validation.
+See [TESTING_FW13.md](TESTING_FW13.md) for Ukrainian installation and troubleshooting guidance and [STATUS.md](STATUS.md) for exact limitations.
 
-See [PORTING.md](PORTING.md) for engineering tasks and [STATUS.md](STATUS.md) for build status.
+## Unfinished work
 
-## CI
+Hardware validation on firmware 13.00; on-screen keyboard; provider-specific headers; full audio/subtitle support; and synchronization with the newest Switch UI/features. The imported PS5 C sources lag behind the current UAPlay-nx source, so this is a native-port development candidate, **not** feature parity with UAPlay-nx v0.5.9.
 
-[GitHub Actions](https://github.com/Small182/UAPlay-ps5/actions) has portable
-tests and an experimental native `native-sdl.yml` build. The successful
-`native-sdl` run uploads **UAPlay-PS5-native-UNTESTED**, a ZIP with
-`UAPlay-PS5-native-candidate.tar.gz` inside. Extract both archives to obtain
-the `PPSA99282` native title folder (`eboot.bin`, `sce_sys/`, `sce_module/`,
-`romfs/` and bundled assets). This is **not a Sony retail PKG**, and it must
-be launched using a compatible homebrew title/folder loader on a PS5 with
-the necessary homebrew access. See [PORTING.md](PORTING.md).
+## Third-party components
 
-The workflow successfully produces **UAPlay-PS5-FFPKG-UNTESTED** containing
-`PPSA99282.ffpkg` (UFS2, for ShadowMountPlus). This PS5 image is **not a
-PS4-compatible `.pkg`**. Place the image directly in a ShadowMountPlus scan
-location such as `/data/homebrew/`; the image itself contains `sce_sys/` at
-its root. [Native packaging run 43070340195](https://github.com/Small182/UAPlay-ps5/actions/runs/43070340195)
-passed. PS5 hardware validation is still required. If it fails to mount or
-launch, inspect `/data/shadowmount/debug.log` before changing launch methods.
-
-## Upstream
-
-The [Switch version](https://github.com/Small182/UAPlay-nx) remains the functional source of the application. Do not replace its NRO with files from this port.
+The native build fetches pinned public PS5 homebrew tooling and PacBrew dependencies. It does not embed Sony firmware, proprietary system files or keys. This is a community homebrew build, not an official PS5 application.
