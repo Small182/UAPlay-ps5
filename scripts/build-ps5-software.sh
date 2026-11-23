@@ -67,6 +67,15 @@ PY
 test -s "$app/dist/PPSA99283/eboot.bin"
 mkdir -p "$app/dist/PPSA99283/romfs"
 cp -a "$project/romfs/." "$app/dist/PPSA99283/romfs/"
+# The PS5 payload runtime must not depend on a platform CA trust store.
+# Bundle the runner's public Mozilla root certificates; TLS verification stays ON.
+if [[ -s /etc/ssl/certs/ca-certificates.crt ]]; then
+    cp /etc/ssl/certs/ca-certificates.crt "$app/dist/PPSA99283/romfs/cacert.pem"
+else
+    echo "Missing CA certificate bundle; refusing insecure PS5 network build" >&2
+    exit 1
+fi
+
 mkdir -p -- "$PS5_NATIVE_OUTPUT"
 cp -a "$app/dist/PPSA99283" "$PS5_NATIVE_OUTPUT/"
 printf 'Native UAPlay candidate staged at %s/PPSA99283\n' "$PS5_NATIVE_OUTPUT"
