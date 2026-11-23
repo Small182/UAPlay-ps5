@@ -38,13 +38,14 @@
 #include "i18n.h"
 #include "iptv.h"
 #include "downloads.h"
+#include "wallpapers.h"
 #ifdef UAPLAY_PS5_SOFTWARE
 #include "../ps5/native_display.h"
 #endif
 
 typedef enum { CATALOG, DETAILS, SOURCES, PLAYER, SETTINGS,
                SEASONS, EPISODES, TRACK_PICKER, VIDEO_SETTINGS,
-               IPTV_COUNTRIES, IPTV_CHANNELS, DOWNLOADS } Page;
+               IPTV_COUNTRIES, IPTV_CHANNELS, DOWNLOADS, WALLPAPERS } Page;
 
 static Episode episodes[EPISODES_MAX];
 static int episode_count,season_ids[64],season_count,selected_season,selected_episode;
@@ -55,6 +56,8 @@ static int track_count,selected_track,subtitle_picker;
 static IptvCatalog ps5_tv_channels={0},ps5_tv_favorites={0};
 static int ps5_tv_country=0,ps5_tv_selection=0,ps5_tv_country_count=0;
 static int ps5_download_selected=0;
+static int ps5_wallpaper_selected=0,ps5_wallpaper_filter=0;
+static int ps5_wallpaper_revision=0;
 static unsigned ps5_download_confirm_id=0;
 static Uint32 ps5_download_confirm_at=0;
 static int selected_video_option;
@@ -1284,7 +1287,9 @@ static void footer(Paint *p,const char *message) {
 #define PAD_HINT(k) (k)
 #endif
 #define HINT(k,l) do{if(count<6){keys[count]=PAD_HINT(k);labels[count]=l;count++;}}while(0)
-    if(footer_page==IPTV_COUNTRIES){
+    if(footer_page==WALLPAPERS){
+        HINT("A","Застосувати");HINT("X","Фільтр");HINT("Y","Скинути");HINT("B","Назад");
+    }else if(footer_page==IPTV_COUNTRIES){
         HINT("A","Країна");HINT("B","Назад");
     }else if(footer_page==IPTV_CHANNELS){
         HINT("A","Відтворити");HINT("X","Вибране");HINT("B","Країни");
@@ -1384,6 +1389,27 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
     ui_gradient_pass=1;
     box_alpha(p,0,0,1280,720,.034f,.042f,.054f,1.f,0);
     ui_gradient_pass=0;
+#ifdef UAPLAY_PS5_SOFTWARE
+    if(wallpapers_texture()){
+        SDL_Texture *bg=(SDL_Texture *)(uintptr_t)wallpapers_texture();
+        int w=wallpapers_width(),h=wallpapers_height();
+        if(w>0 && h>0){
+            SDL_Rect src={0,0,w,h};
+            if((long long)w*720>(long long)h*1280){
+                src.w=(int)((long long)h*1280/720);
+                src.x=(w-src.w)/2;
+            }else{
+                src.h=(int)((long long)w*720/1280);
+                src.y=(h-src.h)/2;
+            }
+            SDL_Rect dst={0,0,1280,720};
+            SDL_SetTextureColorMod(bg,255,255,255);
+            SDL_SetTextureAlphaMod(bg,255);
+            SDL_RenderCopy(ui_renderer,bg,&src,&dst);
+            box_alpha(p,0,0,1280,720,.016f,.023f,.031f,.43f,0);
+        }
+    }
+#endif
     static int previous_page=-1,previous_category=-1,previous_home_shelf=-1;
     static Uint32 transition_at=0;
     if(previous_page!=(int)page ||
@@ -1394,12 +1420,13 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
         transition_at=SDL_GetTicks();
     }
     previous_home_shelf=home_shelf;
-    footer_position=page==IPTV_CHANNELS?(ps5_tv_channels.count?ps5_tv_selection+1:0):
+    footer_position=page==WALLPAPERS?ps5_wallpaper_selected+1:
+                     page==IPTV_CHANNELS?(ps5_tv_channels.count?ps5_tv_selection+1:0):
                      page==IPTV_COUNTRIES?ps5_tv_country+1:
                      page==DOWNLOADS?ps5_download_selected+1:page==CATALOG?(n?chosen+1:0):page==SOURCES?(sn?source+1:0):
                     page==EPISODES?(episode_count?selected_episode+1:0):
                     page==SEASONS?(season_count?selected_season+1:0):0;
-    footer_total=page==IPTV_COUNTRIES?ps5_tv_country_count:
+    footer_total=page==WALLPAPERS?wallpapers_count():page==IPTV_COUNTRIES?ps5_tv_country_count:
                  page==IPTV_CHANNELS?ps5_tv_channels.count:page==CATALOG?n:page==SOURCES?sn:page==SEASONS?season_count:
                  page==EPISODES && selected_season<season_count?
                     episodes_in_season(season_ids[selected_season]):0;
@@ -1569,6 +1596,29 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
             }
         }
         footer(p,status);
+    } else if(page==WALLPAPERS){
+        screen_header(p,"Шпалери · Wallhaven","A — встановити · X — змінити фільтр");
+        const char *filters[]={"Популярні","Нові","Найкращі","Випадкові"};
+        char hint[256];
+        snprintf(hint,sizeof(hint),"Фільтр: %s  ·  Сторінка: %d / %d",
+                 filters[ps5_wallpaper_filter],wallpapers_current_page(),
+                 wallpapers_last_page());
+        text_muted(p,hint,56,93,1150);
+        int total=wallpapers_count();
+        int start=ps5_wallpaper_selected/UI_ROWS*UI_ROWS;
+        for(int i=start;i<total && i<start+UI_ROWS;i++){
+            const WallpaperItem *item=wallpapers_item(i);
+            char detail[120]={0};
+            snprintf(detail,sizeof(detail),"%d × %d",item->width,item->height);
+            list_row(p,item->name,UI_ROW_Y+(i-start)*UI_ROW_STEP,
+                     i==ps5_wallpaper_selected,detail);
+        }
+        if(total==0)
+            text_muted(p,wallpapers_busy()?"Завантаження списку шпалер...":
+                       "Немає зображень. Спробуйте інший фільтр.",55,260,1120);
+        if(wallpapers_message()[0])
+            text_muted(p,wallpapers_message(),55,602,1170);
+        footer(p,status);
     } else if(page==IPTV_COUNTRIES){
         screen_header(p,"IPTV · Країни","Оберіть країну");
         int ncountry=0;
@@ -1613,9 +1663,9 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
         footer(p,status);
     } else if(page==SETTINGS){
         screen_header(p,"Налаштування","UAPlay");
-        const char *items[]={"Тема","Інтерфейс","Плеєр","Автовідтворення","Завантаження"};
-        for(int i=0;i<5;i++){
-            int y=136+i*88;
+        const char *items[]={"Тема","Інтерфейс","Плеєр","Автовідтворення","Завантаження","Шпалери"};
+        for(int i=0;i<6;i++){
+            int y=120+i*78;
             box_alpha(p,32,y,417,72,i==settings_selected?.20f:.09f,
                       i==settings_selected?.29f:.11f,
                       i==settings_selected?.37f:.14f,1.f,16);
@@ -1638,16 +1688,19 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
         }
         else if(settings_selected==2)snprintf(description,sizeof(description),"Швидкість: %.2f · гучність: %.0f",video_options[0],video_options[1]);
         else if(settings_selected==3)snprintf(description,sizeof(description),"Наступна серія: %s",autoplay_episodes?"Автоматично":"Вручну");
-        else snprintf(description,sizeof(description),"Завантаження відео та керування чергою");
+        else if(settings_selected==4)snprintf(description,sizeof(description),"Завантаження відео та керування чергою");
+        else snprintf(description,sizeof(description),"Зображення Wallhaven — вибір тла");
         text(p,description,516,255,682);
         const char *help[]={"Перемикає темну та світлу теми. Вибір зберігається на SD-карті.",
             "Змінює колір виділення на всіх екранах.",
             "Налаштуйте відео, гучність та субтитри.",
             "Після завершення серії пропонує наступну через 3 секунди. Кнопка B скасовує перехід. Вибір зберігається.",
-            "Призупинення, відновлення й видалення завантажень."};
+            "Призупинення, відновлення й видалення завантажень.",
+            "Перегляд безпечних шпалер Wallhaven, встановлення або скидання фону."};
         wrapped(p,help[settings_selected],517,315,675,3,29,p->font_small,.73f,.78f,.84f);
         button(p,settings_selected==2?"Відкрити параметри":
-               settings_selected==4?"Відкрити завантаження":"Змінити",515,537,258,55,1);
+               settings_selected==4?"Відкрити завантаження":
+               settings_selected==5?"Відкрити шпалери":"Змінити",515,537,258,55,1);
         footer(p,status);
     } else if (page==DETAILS) {
         screen_header(p,movies[chosen].series?"Про серіал":"Про фільм","UAPlay");
@@ -2309,6 +2362,7 @@ int main(void) {
     if(ps5_tv_country<0)ps5_tv_country=0;
     (void)iptv_countries(&ps5_tv_country_count);
     downloads_init();
+    wallpapers_init();
 #elif defined(__PS4__)
     library_init();
     theme_load();
@@ -2382,6 +2436,9 @@ int main(void) {
     int media_playback_mode=0;
     while(running){
         Uint32 frame_started_at=SDL_GetTicks();
+#ifdef UAPLAY_PS5_SOFTWARE
+        wallpapers_poll();
+#endif
         stick_arrow(pad,page==PLAYER,&stick_last_time,&stick_last_key);
 #ifdef UAPLAY_PS5_SOFTWARE
         if(page==PLAYER)ps5_player_right_stick(pad,player);
@@ -2640,9 +2697,9 @@ int main(void) {
                         key=tx<640?SDL_CONTROLLER_BUTTON_DPAD_LEFT:SDL_CONTROLLER_BUTTON_DPAD_RIGHT;
                     }else if(ty<92 && tx<100)key=SDL_CONTROLLER_BUTTON_B;
                 }else if(page==SETTINGS){
-                    if(tx>=32 && tx<449 && ty>=136 && ty<560 && (ty-136)%88<72){
-                        settings_selected=(ty-136)/88;
-                        if(settings_selected>=5)settings_selected=4;
+                    if(tx>=32 && tx<449 && ty>=120 && ty<588 && (ty-120)%78<72){
+                        settings_selected=(ty-120)/78;
+                        if(settings_selected>=6)settings_selected=5;
                         key=SDL_CONTROLLER_BUTTON_A;
                     }else if(ty>=537 && ty<592 && tx>=515 && tx<773)key=SDL_CONTROLLER_BUTTON_A;
                     else if(ty<92 && tx<100)key=SDL_CONTROLLER_BUTTON_B;
@@ -2736,6 +2793,42 @@ int main(void) {
                 continue;
             }
 
+            if(page==WALLPAPERS){
+                if(key==SDL_CONTROLLER_BUTTON_B || key==SDL_CONTROLLER_BUTTON_BACK){
+                    page=SETTINGS;message[0]=0;continue;
+                }
+                int count=wallpapers_count();
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_UP && ps5_wallpaper_selected>0)
+                    ps5_wallpaper_selected--;
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN &&
+                   ps5_wallpaper_selected+1<count)ps5_wallpaper_selected++;
+                if(key==SDL_CONTROLLER_BUTTON_LEFTSHOULDER &&
+                   wallpapers_current_page()>1){
+                    wallpapers_browse(ps5_wallpaper_filter,"",wallpapers_current_page()-1);
+                    ps5_wallpaper_selected=0;
+                }
+                if(key==SDL_CONTROLLER_BUTTON_RIGHTSHOULDER &&
+                   wallpapers_current_page()<wallpapers_last_page()){
+                    wallpapers_browse(ps5_wallpaper_filter,"",wallpapers_current_page()+1);
+                    ps5_wallpaper_selected=0;
+                }
+                if(key==SDL_CONTROLLER_BUTTON_X){
+                    ps5_wallpaper_filter=(ps5_wallpaper_filter+1)%4;
+                    ps5_wallpaper_selected=0;
+                    wallpapers_browse(ps5_wallpaper_filter,"",1);
+                }
+                if(key==SDL_CONTROLLER_BUTTON_Y){
+                    wallpapers_reset();
+                    snprintf(message,sizeof(message),"Шпалери скинуто");
+                }
+                if(key==SDL_CONTROLLER_BUTTON_A && count &&
+                   ps5_wallpaper_selected<count){
+                    if(wallpapers_apply(ps5_wallpaper_selected))
+                        snprintf(message,sizeof(message),"Завантаження шпалер...");
+                    else snprintf(message,sizeof(message),"Не вдалося вибрати зображення");
+                }
+                continue;
+            }
             if(page==IPTV_COUNTRIES){
                 if(key==SDL_CONTROLLER_BUTTON_B || key==SDL_CONTROLLER_BUTTON_BACK){
                     page=CATALOG;continue;
@@ -2991,7 +3084,7 @@ int main(void) {
             if(page==SETTINGS){
                 if(key==SDL_CONTROLLER_BUTTON_B || key==SDL_CONTROLLER_BUTTON_BACK){page=CATALOG;continue;}
                 if(key==SDL_CONTROLLER_BUTTON_DPAD_UP && settings_selected>0)settings_selected--;
-                if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN && settings_selected<4)settings_selected++;
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN && settings_selected<5)settings_selected++;
                 if(key==SDL_CONTROLLER_BUTTON_A){
                     if(settings_selected==0){ui_light_theme=!ui_light_theme;theme_save();}
                     else if(settings_selected==1)ui_accent_alt=!ui_accent_alt;
@@ -3001,6 +3094,10 @@ int main(void) {
                         page=VIDEO_SETTINGS;
                     }else if(settings_selected==3){autoplay_episodes=!autoplay_episodes;theme_save();}
                     else if(settings_selected==4){ps5_download_selected=0;page=DOWNLOADS;}
+                    else if(settings_selected==5){
+                        ps5_wallpaper_selected=0;page=WALLPAPERS;
+                        wallpapers_open();
+                    }
                 }
                 continue;
             }
@@ -3537,6 +3634,7 @@ int main(void) {
 #endif
 #ifdef UAPLAY_PS5_SOFTWARE
     downloads_shutdown();
+    wallpapers_shutdown();
     iptv_free(&ps5_tv_channels);
     iptv_free(&ps5_tv_favorites);
 #endif
