@@ -1,13 +1,18 @@
 #ifndef LAMPA_CATALOG_H
 #define LAMPA_CATALOG_H
 
+#include <stddef.h>
+
 #define CATALOG_MAX 200
 #define CATALOG_LOCAL_MAX 256
 #define CATALOG_PAGE_SIZE 20
 /* TMDB exposes at most 500 result pages; search expands only while browsing. */
 #define CATALOG_SEARCH_MAX (500 * CATALOG_PAGE_SIZE)
-#define UAKINO_MAX 20
+#define UAKINO_MAX 40
 #define EPISODES_MAX 2048
+#define UAKINO_PROVIDER_MOVY 9 /* ID 8 is reserved for older settings files. */
+#define MOVY_ORIGIN "https://www.movy.sx"
+#define MOVY_SERIES_URL MOVY_ORIGIN "/tv/"
 
 typedef struct {
     int id;
@@ -56,24 +61,43 @@ int catalog_load_page_sorted(const char *category, const char *query, int page,
                             char *error, int error_size, int *has_more);
 /* Exclude titles associated with Russia, using TMDB's country metadata. */
 int catalog_filter_countries(Movie *items,int count);
-/* Fetch runtime (movie) or total seasons/episodes (TV) for details screen. */
-int catalog_fetch_details(Movie *movie);
+/* Fetch localized text, the primary movie genre, and runtime or TV totals. */
+int catalog_fetch_details(Movie *movie,char *genre,size_t genre_size);
+/* Use the Ukrainian TMDB title in a temporary copy for provider lookup. */
+void catalog_use_ukrainian_search_title(Movie *movie);
 
-/* UAFresh integration: current UAFlix/UASerials sources via UAFresh worker. */
+/* Native source search: UAFlix, UASerials, Eneyida, UAFilm/Klon UA, UAKino. */
 int uakino_search(const Movie *movie, Source *items, int max,
                   char *error, int error_size);
+/* Search a single provider (0=all, 1=UAFlix, 2=UASerials,
+   3=Eneyida, 4=UAFilm, 5=UAKino, 6=Mikai, 7=AnimeON, 9=Movy).
+   Movy is selected explicitly. */
+int uakino_search_provider(const Movie *movie, Source *items, int max,
+                           int provider, char *error, int error_size);
 /* Rank candidates by title match (Ukrainian and original titles), not by
    their position on provider search pages. preferred_provider: 0=all,
    1=UAFlix, 2=UASerials. Returns the count after removing clear mismatches. */
 int catalog_rank_sources(const Movie *movie, Source *items, int count,
                          int preferred_provider);
+int movy_stream_url(const char *url);
 int uakino_resolve(const Source *source, char *stream, int size,
                    char *error, int error_size);
-/* Optional WebVTT URL announced by the last successfully resolved embed. */
+/* Subtitle and alternate-dub links announced by the last resolved player.
+   Indices remain valid until the next call to uakino_resolve(). */
+#define UAKINO_PLAYER_TRACK_MAX 12
+int uakino_resolved_subtitle_count(void);
+const char *uakino_resolved_subtitle_url(int index);
+const char *uakino_resolved_subtitle_label(int index);
+int uakino_resolved_audio_count(void);
+const char *uakino_resolved_audio_url(int index);
+const char *uakino_resolved_audio_label(int index);
+/* Compatibility accessor for the first external subtitle. */
 const char *uakino_resolved_subtitle(void);
 int uakino_episodes(const Source *source, Episode *items, int max,
                     char *error, int error_size);
 /* Next chronologically available episode, preferring the current dub when
    the same episode exists in multiple voice variants. -1 if at the end. */
 int catalog_next_episode(const Episode *items,int count,int current);
+/* Previous available episode, keeping the current voice where possible. */
+int catalog_previous_episode(const Episode *items,int count,int current);
 #endif
