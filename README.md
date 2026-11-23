@@ -2,7 +2,9 @@
 
 Native community port based on [UAPlay-nx](https://github.com/Small182/UAPlay-nx) for Nintendo Switch. Works with experimental PS5 native title loading, **not Sony retail PKG**. The Switch repository is unchanged.
 
-**Active test branch:** [`fw13-ui-fixes-sync`](https://github.com/Small182/UAPlay-ps5/tree/fw13-ui-fixes-sync)
+**Active network-fix test branch:** [`fw13-native-network-v0510`](https://github.com/Small182/UAPlay-ps5/tree/fw13-native-network-v0510)
+
+**Console report addressed:** movie catalogue empty, TV catalogue displayed `HTTP 0: Failed initialization`, and pressing language switch in the old search keyboard exited the app. The latest test branch adds console-tested native PS5 libcurl/DNS/socket compat, retries early libcurl init failure, fixes offline asset paths, surfaces catalogue errors, and replaces the keyboard with QWERTY / ЙЦУКЕН grid navigation. **Not yet confirmed working on physical PS5.**
 
 The owner confirmed that the previous `fw13-exfat` native build started on **PS5 firmware 13.00**, but it had broken search, no covers, missing IPTV, an invalid button legend, square focus outlines, very small UI and an OPTIONS exit bug.
 
@@ -25,7 +27,7 @@ The newer PS5 branch incorporates:
 ## How to get the build
 
 1. Open [GitHub Actions](https://github.com/Small182/UAPlay-ps5/actions) and select **UAPlay native PS5 VideoOut + updated Switch features**.
-2. Choose a **successful** run on branch `fw13-ui-fixes-sync`.
+2. Choose a **successful** run on branch `fw13-native-network-v0510`.
 3. Download **UAPlay-PS5-exFAT-FW13-UNTESTED** and extract the ZIP to obtain `PPSA99283.exfat`.
 4. Copy the resulting image into the ShadowMountPlus native homebrew scan directory (for example `/data/homebrew/`), using the supported native PS5 homebrew environment.
 
