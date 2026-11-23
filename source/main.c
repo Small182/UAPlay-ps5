@@ -1932,6 +1932,11 @@ static int keyboard(char *value,size_t size) {
 #endif
 }
 
+#ifdef __PS4__
+enum { PS4_VIDEO_WIDTH=960, PS4_VIDEO_HEIGHT=540, PS4_VIDEO_STRIDE=PS4_VIDEO_WIDTH*4 };
+static SDL_Texture *ps4_video_texture;
+static void *ps4_video_pixels;
+
 static int render_ps4_video(mpv_render_context *render){
     if(!ps4_video_texture){
         ps4_video_texture=SDL_CreateTexture(ui_renderer,SDL_PIXELFORMAT_ABGR8888,
