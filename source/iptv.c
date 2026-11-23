@@ -2,6 +2,9 @@
 #include "platform.h"
 
 #include <curl/curl.h>
+#ifdef __PS5__
+#include "console_curl.h"
+#endif
 #include <ctype.h>
 #include <errno.h>
 #include <stdio.h>
@@ -318,6 +321,9 @@ int iptv_load(int country,IptvCatalog *catalog,int *from_cache) {
     snprintf(url,sizeof(url),IPTV_URL "%c%c.m3u",first,second);
     Playlist buffer={0};
     CURL *curl=curl_easy_init();
+#ifdef __PS5__
+    if(curl)console_curl_setup(curl);
+#endif
     CURLcode result=CURLE_FAILED_INIT;
     if(curl){
         curl_easy_setopt(curl,CURLOPT_URL,url);
