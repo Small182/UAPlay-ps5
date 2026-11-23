@@ -516,6 +516,11 @@ typedef struct {
     TTF_Font *scripts_big[7];
     TTF_Font *scripts_tiny[7];
 } Paint;
+#ifdef __PS5__
+static Paint *keyboard_paint;
+static SDL_Window *keyboard_window;
+static void present_ui(SDL_Window *window);
+#endif
 static const char *script_fonts[]={"Tamil","Telugu","Devanagari","Malayalam",
                                   "Bengali","Arabic","Thai"};
 static TTF_Font *choose_font(Paint *p,const char *s){
@@ -662,6 +667,33 @@ static void rounded_box(SDL_Rect rect,int radius,SDL_Color color,SDL_Texture *te
     }
     SDL_RenderGeometry(ui_renderer,texture,vertices,perimeter+1,indices,perimeter*3);
 }
+/* Draw an actual rounded annulus, not an SDL_RenderDrawRect.
+   Shader-based Switch selection borders have rounded corners. */
+static void rounded_outline(SDL_Rect rect,int radius,int thickness,SDL_Color color){
+    enum { segments=8, perimeter=4*(segments+1) };
+    const float step=1.57079632679f/segments;
+    SDL_Vertex vertices[2*perimeter];
+    int indices[6*perimeter];
+    if(radius<1)radius=1;
+    if(thickness<1)thickness=1;
+    if(thickness>=radius)thickness=radius>1?radius-1:1;
+    for(int corner=0;corner<4;corner++){
+        float cx=rect.x+(corner==0 || corner==3?rect.w-radius:radius);
+        float cy=rect.y+(corner<2?rect.h-radius:radius);
+        for(int point=0;point<=segments;point++){
+            int k=corner*(segments+1)+point;
+            float angle=(corner*segments+point)*step;
+            float cs=cosf(angle),sn=sinf(angle);
+            vertices[2*k]=(SDL_Vertex){{cx+radius*cs,cy+radius*sn},color,{0.f,0.f}};
+            vertices[2*k+1]=(SDL_Vertex){{cx+(radius-thickness)*cs,
+                                          cy+(radius-thickness)*sn},color,{0.f,0.f}};
+            int next=(k+1)%perimeter;
+            indices[6*k]=2*k;indices[6*k+1]=2*k+1;indices[6*k+2]=2*next;
+            indices[6*k+3]=2*next;indices[6*k+4]=2*k+1;indices[6*k+5]=2*next+1;
+        }
+    }
+    SDL_RenderGeometry(ui_renderer,NULL,vertices,2*perimeter,indices,6*perimeter);
+}
 #endif
 
 static void renderer_box(const Paint *p,SDL_Rect rect,float r,float g,float b,float a,int radius){
@@ -670,6 +702,10 @@ static void renderer_box(const Paint *p,SDL_Rect rect,float r,float g,float b,fl
 #ifdef UAPLAY_PS5_SOFTWARE
     if(radius>rect.w/2)radius=rect.w/2;
     if(radius>rect.h/2)radius=rect.h/2;
+    if(radius>0 && p->tex==p->solid_tex && ui_outline_width){
+        rounded_outline(rect,radius,ui_outline_width,color);
+        return;
+    }
     if(radius>0 && !ui_outline_width){
         SDL_Texture *texture=p->tex!=p->solid_tex?(SDL_Texture *)p->tex:NULL;
         rounded_box(rect,radius,color,texture);
@@ -1197,8 +1233,10 @@ static void footer(Paint *p,const char *message) {
               p->font_small,ar,ag,ab);
     const char *keys[6],*labels[6];int count=0;
 #if defined(__PS5__) || defined(__PS4__)
-#define PAD_HINT(k) (!strcmp(k,"A")?"✕":!strcmp(k,"B")?"◯": \
-                     !strcmp(k,"X")?"□":!strcmp(k,"Y")?"△": \
+/* Some PS5 homebrew builds lack glyphs for PlayStation symbols. Keep
+   unmistakable ASCII hints until an icon atlas is installed. */
+#define PAD_HINT(k) (!strcmp(k,"A")?"X":!strcmp(k,"B")?"O": \
+                     !strcmp(k,"X")?"[]":!strcmp(k,"Y")?"^": \
                      !strcmp(k,"L")?"L1":!strcmp(k,"R")?"R1": \
                      !strcmp(k,"−")?"OPTIONS":k)
 #else
@@ -1780,11 +1818,108 @@ static void configure_stream(mpv_handle *player,const char *url) {
 }
 static int keyboard(char *value,size_t size) {
 #ifdef __PS5__
-    /* TODO: connect native PS5 IME; do not call the unavailable libnx SWKBD. */
-    (void)value;(void)size;
-    return 0;
+    /* Native OSK/IME is not available in this video driver. Draw a proper
+       DualSense-operated UTF-8 keyboard rather than silently rejecting search. */
+    static const char *ua[]={
+        "а","б","в","г","ґ","д","е","є","ж","з",
+        "и","і","ї","й","к","л","м","н","о","п",
+        "р","с","т","у","ф","х","ц","ч","ш","щ",
+        "ь","ю","я"
+    };
+    static const char *en[]={
+        "a","b","c","d","e","f","g","h","i","j",
+        "k","l","m","n","o","p","q","r","s","t",
+        "u","v","w","x","y","z"
+    };
+    static const char *action[]={"ПРОБІЛ","СТЕРТИ","EN / УК","ЗНАЙТИ","СКАСУВАТИ"};
+    if(!keyboard_paint || !keyboard_window || !value || size<2)return 0;
+    value[0]=0;
+    int ukrainian=1,focus=0,running_keyboard=1,confirmed=0;
+    while(running_keyboard){
+        const int letters=ukrainian?33:26;
+        const int total=letters+5;
+        SDL_Event event;
+        while(SDL_PollEvent(&event)){
+            int key=-1;
+            if(event.type==SDL_QUIT){running_keyboard=0;break;}
+            if(event.type==SDL_CONTROLLERBUTTONDOWN)
+                key=native_button(event.cbutton.button);
+            if(event.type==SDL_KEYDOWN){
+                switch(event.key.keysym.sym){
+                    case SDLK_RETURN:key=SDL_CONTROLLER_BUTTON_A;break;
+                    case SDLK_ESCAPE:
+                    case SDLK_BACKSPACE:key=SDL_CONTROLLER_BUTTON_B;break;
+                    case SDLK_UP:key=SDL_CONTROLLER_BUTTON_DPAD_UP;break;
+                    case SDLK_DOWN:key=SDL_CONTROLLER_BUTTON_DPAD_DOWN;break;
+                    case SDLK_LEFT:key=SDL_CONTROLLER_BUTTON_DPAD_LEFT;break;
+                    case SDLK_RIGHT:key=SDL_CONTROLLER_BUTTON_DPAD_RIGHT;break;
+                    case SDLK_TAB:key=SDL_CONTROLLER_BUTTON_Y;break;
+                    default:break;
+                }
+            }
+            if(key==SDL_CONTROLLER_BUTTON_B || key==SDL_CONTROLLER_BUTTON_BACK){
+                running_keyboard=0;break;
+            }
+            if(key==SDL_CONTROLLER_BUTTON_Y){ukrainian=!ukrainian;focus=0;continue;}
+            if(key==SDL_CONTROLLER_BUTTON_X){
+                size_t len=strlen(value);
+                if(len){do{len--;}while(len && ((unsigned char)value[len]&0xc0)==0x80);
+                        value[len]=0;}
+                continue;
+            }
+            int candidate=focus;
+            if(key==SDL_CONTROLLER_BUTTON_DPAD_LEFT)candidate--;
+            if(key==SDL_CONTROLLER_BUTTON_DPAD_RIGHT)candidate++;
+            if(key==SDL_CONTROLLER_BUTTON_DPAD_UP)candidate-=10;
+            if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN)candidate+=10;
+            if(candidate<0)candidate=0;
+            if(candidate>=total)candidate=total-1;
+            if(key>=0 && key!=SDL_CONTROLLER_BUTTON_A){
+                focus=candidate;continue;
+            }
+            if(key!=SDL_CONTROLLER_BUTTON_A)continue;
+            if(focus<letters){
+                const char *character=ukrainian?ua[focus]:en[focus];
+                size_t n=strlen(value),add=strlen(character);
+                if(n+add<size){memcpy(value+n,character,add+1);}
+            }else switch(focus-letters){
+                case 0:{
+                    size_t n=strlen(value);if(n+1<size){value[n]=' ';value[n+1]=0;}
+                    break;
+                }
+                case 1:{
+                    size_t len=strlen(value);
+                    if(len){do{len--;}while(len && ((unsigned char)value[len]&0xc0)==0x80);
+                            value[len]=0;}
+                    break;
+                }
+                case 2:ukrainian=!ukrainian;focus=0;break;
+                case 3:confirmed=value[0]!=0;running_keyboard=0;break;
+                case 4:running_keyboard=0;break;
+            }
+        }
+        if(!running_keyboard)break;
+        Paint *p=keyboard_paint;
+        box_alpha(p,0,0,1280,720,.035f,.045f,.061f,1.f,0);
+        headline(p,"Пошук — введіть назву",55,60,1100);
+        box_alpha(p,55,115,1170,70,.11f,.16f,.20f,1.f,15);
+        text(p,value[0]?value:"Введіть назву фільму або серіалу…",78,132,1120);
+        for(int i=0;i<total;i++){
+            int x=63+(i%10)*116,y=216+(i/10)*77;
+            box_alpha(p,x,y,103,60,i==focus?.20f:.11f,
+                      i==focus?.34f:.17f,i==focus?.40f:.21f,1.f,14);
+            if(i==focus)selection_frame(p,x,y,103,60);
+            const char *label=i<letters?(ukrainian?ua[i]:en[i]):action[i-letters];
+            text_center_button(p,label,x,y,103,60,p->font_small,.97f,.98f,.99f);
+        }
+        text_muted(p,"Хрестик — вибрати   •   Квадрат — стерти   •   Трикутник — мова   •   Коло — назад",
+                   62,636,1160);
+        present_ui(keyboard_window);
+        SDL_Delay(16);
+    }
+    if(!confirmed)value[0]=0;
+    return confirmed;
 #elif defined(__PS4__)
-    /* TODO: integrate SceImeDialog; do not invoke the Switch software keyboard. */
     (void)value;(void)size;
     return 0;
 #else
@@ -1796,10 +1931,6 @@ static int keyboard(char *value,size_t size) {
     return R_SUCCEEDED(result) && value[0];
 #endif
 }
-#ifdef __PS4__
-enum { PS4_VIDEO_WIDTH=960, PS4_VIDEO_HEIGHT=540, PS4_VIDEO_STRIDE=PS4_VIDEO_WIDTH*4 };
-static SDL_Texture *ps4_video_texture;
-static void *ps4_video_pixels;
 
 static int render_ps4_video(mpv_render_context *render){
     if(!ps4_video_texture){
@@ -2012,6 +2143,10 @@ int main(void) {
         exit_code=4;
         goto cleanup_paint;
     }
+#ifdef __PS5__
+    keyboard_paint=&paint;
+    keyboard_window=window;
+#endif
 #ifdef UAPLAY_PS5_SOFTWARE
     library_init();
     theme_load();
@@ -2358,6 +2493,11 @@ int main(void) {
             }
             if(page==PLAYER && key>=0)controls_until=SDL_GetTicks()+3000;
             if(key<0)continue;
+            /* On DualSense OPTIONS is SDL START. It must open the main menu,
+               not terminate the native title and leave the display black. */
+#ifdef __PS5__
+            if(key==SDL_CONTROLLER_BUTTON_START)key=SDL_CONTROLLER_BUTTON_BACK;
+#endif
             if(clear_history_confirm && !(page==CATALOG && category==12 &&
                catalog_hero_focus==18 && key==SDL_CONTROLLER_BUTTON_A)){
                 clear_history_confirm=0;
@@ -2556,7 +2696,9 @@ int main(void) {
                 }
                 continue;
             }
+            #ifndef __PS5__
             if(key==SDL_CONTROLLER_BUTTON_START){running=0;continue;}
+#endif
             if(page==CATALOG){
                 if(key==SDL_CONTROLLER_BUTTON_BACK){page=SETTINGS;continue;}
                 if(key==SDL_CONTROLLER_BUTTON_A && catalog_hero_focus==5)
