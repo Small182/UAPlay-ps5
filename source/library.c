@@ -1,15 +1,69 @@
 #include "library.h"
+#include "platform.h"
+
+#include <dirent.h>
+#include <errno.h>
+#include <unistd.h>
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include "platform_paths.h"
 
-#define LIBRARY_DIR UAPLAY_LIBRARY_DIR
+#define LIBRARY_DIR UAPLAY_DATA_DIR
 #define LIBRARY_FILE LIBRARY_DIR "/library.tsv"
 #define LIBRARY_TMP LIBRARY_DIR "/library.tmp"
-#define MAX_LIBRARY_ITEMS 256
+#define LIBRARY_BACKUP LIBRARY_DIR "/library.bak"
+static void migrate_storage(void) {
+#if !defined(__vita__) && !defined(__PS5__)
+    struct stat info;
+    if (stat(UAPLAY_PREVIOUS_DATA_DIR, &info) != 0 || !S_ISDIR(info.st_mode)) return;
+    if (stat(LIBRARY_DIR, &info) != 0 && errno == ENOENT &&
+        rename(UAPLAY_PREVIOUS_DATA_DIR, LIBRARY_DIR) == 0) return;
+
+    char backup[sizeof(LIBRARY_DIR) + 64] = "";
+    for (;;) {
+        DIR *directory = opendir(UAPLAY_PREVIOUS_DATA_DIR);
+        if (!directory) return;
+        struct dirent *entry;
+        char name[256] = "";
+        while ((entry = readdir(directory))) {
+            if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+            if (strlen(entry->d_name) >= sizeof(name)) {
+                closedir(directory);
+                return;
+            }
+            strcpy(name, entry->d_name);
+            break;
+        }
+        closedir(directory);
+        if (!name[0]) {
+            rmdir(UAPLAY_PREVIOUS_DATA_DIR);
+            return;
+        }
+
+        char source[sizeof(UAPLAY_PREVIOUS_DATA_DIR) + sizeof(name)];
+        char destination[sizeof(backup) + sizeof(name)];
+        snprintf(source, sizeof(source), "%s/%s", UAPLAY_PREVIOUS_DATA_DIR, name);
+        snprintf(destination, sizeof(destination), "%s/%s", LIBRARY_DIR, name);
+        if (stat(destination, &info) == 0) {
+            if (!backup[0]) {
+                unsigned number = 1;
+                for (;;) {
+                    snprintf(backup, sizeof(backup), LIBRARY_DIR "/migrated-data-%u", number++);
+                    if (mkdir(backup, 0777) == 0) break;
+                    if (errno != EEXIST || number == 0) return;
+                }
+            }
+            snprintf(destination, sizeof(destination), "%s/%s", backup, name);
+        } else if (errno != ENOENT) return;
+
+        /* Moving whole subdirectories keeps associated files together. */
+        if (rename(source, destination) != 0) return;
+    }
+#endif
+}
+#define MAX_LIBRARY_ITEMS 1024
 
 typedef struct {
     Movie movie;
@@ -68,12 +122,30 @@ static void library_save(void) {
                 e->last_season,e->last_episode,e->movie.rating,e->movie.popularity,
                 overview);
     }
-    if (fclose(file)==0) rename(LIBRARY_TMP,LIBRARY_FILE);
+    if (fclose(file)!=0) { remove(LIBRARY_TMP); return; }
+    /* FAT does not reliably replace an existing destination with rename().
+       Keep the previous complete library until the new file is installed. */
+    FILE *previous=fopen(LIBRARY_FILE,"rb");
+    int had_previous=previous!=NULL;
+    if(previous)fclose(previous);
+    if(had_previous){
+        remove(LIBRARY_BACKUP);
+        if(rename(LIBRARY_FILE,LIBRARY_BACKUP)!=0){
+            remove(LIBRARY_TMP);
+            return;
+        }
+    }
+    if(rename(LIBRARY_TMP,LIBRARY_FILE)!=0){
+        if(had_previous)rename(LIBRARY_BACKUP,LIBRARY_FILE);
+        remove(LIBRARY_TMP);
+    }
 }
 
 void library_init(void) {
+    migrate_storage();
     total=0;
     FILE *file=fopen(LIBRARY_FILE,"rb");
+    if(!file)file=fopen(LIBRARY_BACKUP,"rb");
     if (!file) return;
     char line[2400];
     while (total<MAX_LIBRARY_ITEMS && fgets(line,sizeof(line),file)) {
