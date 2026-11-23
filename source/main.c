@@ -796,17 +796,33 @@ static int paint_init(Paint *p) {
         return 0;
     }
     /* Inter has SF/Helvetica-like proportions and includes Ukrainian glyphs. */
+#ifdef UAPLAY_PS5_SOFTWARE
+    /* Supersample glyph masks at 1.5x so native 1080p output gets crisp
+       typography despite the UI retaining a stable 1280x720 coordinate grid. */
+    p->font=TTF_OpenFont(UAPLAY_ASSET("InterVariable.ttf"),33);
+    p->font_big=TTF_OpenFont(UAPLAY_ASSET("InterVariable.ttf"),47);
+    p->font_small=TTF_OpenFont(UAPLAY_ASSET("InterVariable.ttf"),29);
+    p->font_tiny=TTF_OpenFont(UAPLAY_ASSET("InterVariable.ttf"),23);
+#else
     p->font=TTF_OpenFont(UAPLAY_ASSET("InterVariable.ttf"),22);
     p->font_big=TTF_OpenFont(UAPLAY_ASSET("InterVariable.ttf"),31);
     p->font_small=TTF_OpenFont(UAPLAY_ASSET("InterVariable.ttf"),19);
     p->font_tiny=TTF_OpenFont(UAPLAY_ASSET("InterVariable.ttf"),15);
+#endif
     for(int i=0;i<7;i++){
         char path[96];
         snprintf(path,sizeof(path),UAPLAY_ASSET("NotoSans%s.ttf"),script_fonts[i]);
+        #ifdef UAPLAY_PS5_SOFTWARE
+        p->scripts[i]=TTF_OpenFont(path,33);
+        p->scripts_small[i]=TTF_OpenFont(path,29);
+        p->scripts_big[i]=TTF_OpenFont(path,47);
+        p->scripts_tiny[i]=TTF_OpenFont(path,23);
+#else
         p->scripts[i]=TTF_OpenFont(path,22);
         p->scripts_small[i]=TTF_OpenFont(path,19);
         p->scripts_big[i]=TTF_OpenFont(path,31);
         p->scripts_tiny[i]=TTF_OpenFont(path,15);
+#endif
     }
     if(!p->font || !p->font_big || !p->font_small || !p->font_tiny){
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Required font %s: %s",
@@ -995,9 +1011,14 @@ static void text_color(Paint *p,const char *str,int x,int y,int limit,
     /* Never shrink a long title: clip it at the card edge instead. */
 #if defined(__PS4__) || defined(UAPLAY_PS5_SOFTWARE)
     if(ui_renderer){
-        SDL_Rect clip={x,y,limit,height};
+        int draw_width=width,draw_height=height;
+#ifdef UAPLAY_PS5_SOFTWARE
+        draw_width=(width*2+1)/3;
+        draw_height=(height*2+1)/3;
+#endif
+        SDL_Rect clip={x,y,limit,draw_height};
         if(limit>0)SDL_RenderSetClipRect(ui_renderer,&clip);
-        box_alpha(p,x,y,width,height,r,g,b,1.f,0);
+        box_alpha(p,x,y,draw_width,draw_height,r,g,b,1.f,0);
         if(limit>0)SDL_RenderSetClipRect(ui_renderer,NULL);
         p->tex=previous;
         ui_texture_destroy(transient_texture);
@@ -1048,7 +1069,11 @@ static int measure(Paint *p,const char *s,TTF_Font *font){
     int w=0,h=0;
     TTF_SizeUTF8(choose_font(p,s),s,&w,&h);
     p->font=prev;
+#ifdef UAPLAY_PS5_SOFTWARE
+    return (w*2+1)/3;
+#else
     return w;
+#endif
 }
 static int text_height(Paint *p,const char *s,TTF_Font *font){
     TTF_Font *previous=p->font;
@@ -1057,7 +1082,11 @@ static int text_height(Paint *p,const char *s,TTF_Font *font){
     int w=0,h=0;
     if(actual)TTF_SizeUTF8(actual,s,&w,&h);
     p->font=previous;
+#ifdef UAPLAY_PS5_SOFTWARE
+    return (h*2+1)/3;
+#else
     return h;
+#endif
 }
 static void text_center(Paint *p,const char *s,int x,int y,int width,TTF_Font *font,
                         float r,float g,float b){
