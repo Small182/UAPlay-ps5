@@ -109,6 +109,15 @@ int mpv_initialize(mpv_handle *p) {
         if(p)snprintf(p->error_text,sizeof(p->error_text),"%s",Kit_GetError());
         return -1;
     }
+    /* PacBrew ships Kitchensink 2.0.0-a2: its default video packet queue
+       holds only 16 packets, while FFmpeg auto-detects the thread count.
+       Explicitly bound frame-thread latency and allow a larger input queue
+       so an H.264/HEVC decoder can receive enough packets to emit a frame. */
+    Kit_SetHint(KIT_HINT_THREAD_COUNT,2);
+    Kit_SetHint(KIT_HINT_VIDEO_BUFFER_PACKETS,64);
+    Kit_SetHint(KIT_HINT_VIDEO_BUFFER_FRAMES,4);
+    Kit_SetHint(KIT_HINT_AUDIO_BUFFER_PACKETS,128);
+    Kit_SetHint(KIT_HINT_AUDIO_BUFFER_FRAMES,64);
     p->ready=1;
     return 0;
 }
@@ -180,6 +189,7 @@ static int open_stream(mpv_handle *p,const char *url) {
     video_diagnostic(p,"Media source opened",0);
     Kit_VideoFormatRequest video;
     Kit_ResetVideoFormatRequest(&video);
+    video.hw_device_types=0;
     video.format=SDL_PIXELFORMAT_RGBA32;
     video.width=1280;
     video.height=720;
@@ -318,8 +328,8 @@ mpv_event *mpv_wait_event(mpv_handle *p,double timeout) {
     audio_tick(p);
     if(p->event_stage==1){p->event_stage=2;result.event_id=MPV_EVENT_START_FILE;}
     else if(p->event_stage==2 && p->decoder){
-        unsigned int frames=0,packets=0;
-        Kit_GetPlayerVideoBufferState(p->decoder,&frames,NULL,&packets,NULL);
+        unsigned int frames=0,packets=0,frame_capacity=0,packet_capacity=0;
+        Kit_GetPlayerVideoBufferState(p->decoder,&frames,&frame_capacity,&packets,&packet_capacity);
         if(p->first_frame || Kit_GetPlayerVideoStream(p->decoder)<0){
             p->event_stage=0;result.event_id=MPV_EVENT_FILE_LOADED;
             video_diagnostic(p,"First decoded frame ready",(int)frames);
@@ -331,7 +341,7 @@ mpv_event *mpv_wait_event(mpv_handle *p,double timeout) {
             video_diagnostic(p,"Waiting for decoded frame",(int)frames);
             video_diagnostic(p,"Queued video packets",(int)packets);
             video_diagnostic(p,"Decoder state",Kit_GetPlayerState(p->decoder));
-            snprintf(p->diagnostic,sizeof(p->diagnostic),"Decoder: %d | Frames: %u | Packets: %u | Audio: %s",Kit_GetPlayerState(p->decoder),frames,packets,p->audio?"OK":"OFF");
+            snprintf(p->diagnostic,sizeof(p->diagnostic),"D:%d F:%u/%u P:%u/%u A:%s Threads:2",Kit_GetPlayerState(p->decoder),frames,frame_capacity,packets,packet_capacity,p->audio?"OK":"OFF");
         }
     }
     else if(p->event_stage==3){
