@@ -48,6 +48,10 @@ typedef struct {
    Call cleanup only after the loader thread has stopped. */
 void catalog_http_init(void);
 void catalog_http_cleanup(void);
+#ifdef __PS5__
+/* Public HTTPS Cloudflare Worker origin, if configured (no API secret). */
+int catalog_web_api_origin(char *origin,size_t size);
+#endif
 
 /* NRO includes a public TMDB key; optional SD override under switch/uaplay. */
 int catalog_load(const char *category, const char *query, Movie *items, int max,
