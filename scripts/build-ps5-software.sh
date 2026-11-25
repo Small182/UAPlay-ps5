@@ -32,7 +32,16 @@ cp -a "$app/src-base/runtime/." "$app/src/runtime/"
 cp "$project"/source/*.c "$project"/source/*.h "$app/src/"
 # IPTV country metadata is a C include consumed by iptv.c.
 cp "$project"/source/*.inc "$app/src/"
-cp "$project/ps5/kitchensink_mpv.c" "$app/src/kitchensink_mpv.c"
+# This branch deliberately builds VLC instead of Kitchensink.
+vlc_work="${VLC_PS5_WORK:-/tmp/uaplay-vlc-work}"
+vlc_upstream="${UAPLAY_VLC_UPSTREAM:-/tmp/uaplay-vlc-upstream}"
+test -s "$vlc_work/static-ps5/static_modules.c"
+cp "$project/ps5/libvlc_mpv.c" "$app/src/libvlc_mpv.c"
+cp "$vlc_work/static-ps5/static_modules.c" "$app/src/vlc_static_modules.c"
+cp "$vlc_upstream/ps5/modules/ps5http.c" "$app/src/vlc_ps5http.c"
+ln -s "$vlc_work/src/vlc-3.0.24/include" "$app/vlc-headers"
+export UAPLAY_VLC_WORK="$vlc_work"
+export UAPLAY_VLC_UPSTREAM="$vlc_upstream"
 cp "$project/ps5/posix_compat.c" "$app/src/posix_compat.c"
 cp "$project/ps5/kitchensink_mpv.h" "$project/ps5/native_display.h" "$app/ps5/"
 cp "$project/ps5/native_display.c" "$app/src/"
@@ -43,6 +52,7 @@ cp "$project/ps5/icon0.png" "$app/sce_sys/icon0.png"
 # PacBrew's .pc files contain Linux-only linker flags even for their PS5
 # archives. Normalize the flags in the throwaway pinned template checkout.
 python3 "$project/scripts/patch-ps5-linker.py" "$app/tools/build.sh" --without-ps5-keyboard
+python3 "$project/scripts/patch-libvlc-linker.py" "$app/tools/build.sh"
 
 (
     cd "$app"
@@ -62,13 +72,18 @@ path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encod
 PY
     make libc
     APP_DEFINITIONS='__PS5__ SDL_MAIN_HANDLED UAPLAY_PS5_SOFTWARE' \
-    PACBREW_PACKAGES='sdl2 SDL2_ttf SDL2_image libcurl SDL_kitchensink libavformat libavcodec libavutil libswscale libswresample libass' \
+    APP_INCLUDE_PATHS='vlc-headers' \
+    PACBREW_PACKAGES='sdl2 SDL2_ttf SDL2_image libcurl' \
     bash tools/build.sh Folder
 )
 
 test -s "$app/dist/PPSA99283/eboot.bin"
 mkdir -p "$app/dist/PPSA99283/romfs"
 cp -a "$project/romfs/." "$app/dist/PPSA99283/romfs/"
+mkdir -p "$app/dist/PPSA99283/certs" "$app/dist/PPSA99283/fonts/fallback"
+cp "$vlc_upstream/assets/certs/cacert.pem" "$app/dist/PPSA99283/certs/"
+cp "$vlc_upstream/assets/fonts/Inter-SemiBold.ttf" "$app/dist/PPSA99283/fonts/subtitle.ttf"
+cp "$vlc_upstream/assets/fonts/fallback/"*.tt[fc] "$app/dist/PPSA99283/fonts/fallback/"
 # The PS5 payload runtime must not depend on a platform CA trust store.
 # Bundle the runner's public Mozilla root certificates; TLS verification stays ON.
 if [[ -s /etc/ssl/certs/ca-certificates.crt ]]; then
