@@ -90,11 +90,21 @@ static void init_status(const char *stage,const char *detail){
     FILE *f=fopen(UAPLAY_DATA_ROOT "/vlc-init.log","a");
     if(f){fprintf(f,"%s\n",init_error);fclose(f);}
 }
+static SDL_SpinLock vlc_log_lock;
+static char vlc_video_warning[128];
 static void vlc_console_log(void *opaque,int level,const libvlc_log_t *ctx,const char *fmt,va_list args){
     (void)opaque;(void)ctx;
     if(level<LIBVLC_WARNING)return;
     char line[256];vsnprintf(line,sizeof(line),fmt,args);
-    fprintf(stderr,"VLC: %s\n",line);
+    const char *module=NULL;
+    libvlc_log_get_context(ctx,&module,NULL,NULL);
+    if(module && (strstr(module,"vout")||strstr(module,"vmem")||strstr(module,"decoder")||
+                  strstr(module,"avcodec")||strstr(module,"ps5vdec")||strstr(module,"swscale")||
+                  strstr(module,"video")||strstr(module,"chroma"))){
+        SDL_AtomicLock(&vlc_log_lock);
+        snprintf(vlc_video_warning,sizeof(vlc_video_warning),"%.20s: %.100s",module,line);
+        SDL_AtomicUnlock(&vlc_log_lock);
+    }
 }
 /* Native PS5 audio output (same PCM format and grain as upstream VLC). */
 extern int sceAudioOutInit(void);
@@ -120,7 +130,10 @@ struct mpv_handle {
     size_t frame_size,offsets[3];
     unsigned width,height,pitches[3],lines[3],serial,decoded,generation;
     unsigned ten_bit,two_planes,full_range,p010;
-    Uint32 playing_since,opened_at;
+    Uint32 playing_since,opened_at,stats_at;
+    unsigned setup_count,display_count;
+    int video_tracks,core_decoded,core_lost,core_shown;
+    char source_chroma[5];
     libvlc_time_t last_video_time;
     char chroma[5];
     int active,started,loaded,volume;
@@ -154,6 +167,7 @@ static unsigned video_setup(void **opaque,char *chroma,unsigned *w,unsigned *h,
                             unsigned *pitch,unsigned *lines){
     mpv_handle *p=*opaque;
     if(!*w||!*h||*w>4096||*h>2304)return 0;
+    char original[5]={0};memcpy(original,chroma,4);
     unsigned nv12=!memcmp(chroma,"NV12",4),p010=!memcmp(chroma,"P010",4);
     unsigned ten=p010||!memcmp(chroma,"I0A",3)||!memcmp(chroma,"I2A",3)||!memcmp(chroma,"I4A",3);
     unsigned two=nv12||p010,full=!memcmp(chroma,"J4",2);
@@ -161,6 +175,8 @@ static unsigned video_setup(void **opaque,char *chroma,unsigned *w,unsigned *h,
     unsigned bpp=ten?2:1,cw=(*w+1)/2,ch=(*h+1)/2;
     SDL_LockMutex(p->lock);
     video_buffers_free(p);
+    p->setup_count++;
+    memcpy(p->source_chroma,original,5);
     p->width=*w;p->height=*h;p->ten_bit=ten;p->two_planes=two;
     p->full_range=full;p->p010=two&&ten;
     memcpy(p->chroma,chroma,4);p->chroma[4]=0;
@@ -195,12 +211,17 @@ static void *video_lock(void *opaque,void **planes){
 }
 static void video_unlock(void *opaque,void *picture,void *const *planes){
     (void)picture;(void)planes;mpv_handle *p=opaque;
-    if(p->frame&&p->ready_frame){memcpy(p->ready_frame,p->frame,p->frame_size);p->decoded++;}
+    if(p->frame&&p->ready_frame){
+        /* VLC has finished Prepare: the frame is valid even if Display is
+           skipped by its clock. Swap, don't copy or wait on Display. */
+        unsigned char *prev=p->ready_frame;p->ready_frame=p->frame;p->frame=prev;
+        p->decoded++;p->serial++;
+    }
     SDL_UnlockMutex(p->lock);
 }
 static void video_display(void *opaque,void *picture){
     (void)picture;mpv_handle *p=opaque;
-    SDL_LockMutex(p->lock);p->serial=p->decoded;SDL_UnlockMutex(p->lock);
+    SDL_LockMutex(p->lock);p->display_count++;SDL_UnlockMutex(p->lock);
 }
 static void audio_clear(mpv_handle *p){
     if(!p->audio_lock)return;
@@ -302,7 +323,10 @@ static void stop(mpv_handle *p){
     }
     if(p->mp)libvlc_media_player_stop(p->mp);
     audio_clear(p);
-    p->playing_since=0;p->opened_at=0;p->last_video_time=0;
+    SDL_LockMutex(p->audio_lock);p->audio_packets=0;SDL_UnlockMutex(p->audio_lock);
+    p->playing_since=0;p->opened_at=0;p->last_video_time=0;p->stats_at=0;
+    p->setup_count=p->display_count=0;p->video_tracks=p->core_decoded=p->core_lost=p->core_shown=0;
+    SDL_AtomicLock(&vlc_log_lock);vlc_video_warning[0]=0;SDL_AtomicUnlock(&vlc_log_lock);
     p->loaded=p->started=0;
     __atomic_store_n(&hw_active,0,__ATOMIC_RELEASE);
     __atomic_store_n(&hw_failed,0,__ATOMIC_RELEASE);
@@ -333,14 +357,14 @@ int mpv_initialize(mpv_handle *p){
         "--aout=adummy","--adaptive-use-access","--subsdec-encoding=UTF-8",
         "--gnutls-dir-trust=/app0/certs","--no-gnutls-system-trust",
         "--freetype-font=/app0/fonts/subtitle.ttf",
-        "--ssa-fontsdir=/app0/fonts/fallback","--verbose=-1"
+        "--ssa-fontsdir=/app0/fonts/fallback","--stats","--no-drop-late-frames","--no-skip-frames","--verbose=2"
     };
     init_status("libvlc_new",NULL);
     p->vlc=libvlc_new(sizeof(args)/sizeof(args[0]),args);
     if(!p->vlc){
         init_status("libvlc_new failed",libvlc_errmsg());
         libvlc_clearerr();
-        const char *minimal[]={"--ignore-config","--verbose=-1"};
+        const char *minimal[]={"--ignore-config","--verbose=2"};
         p->vlc=libvlc_new(2,minimal);
         if(!p->vlc){
             init_status("libvlc_new (minimal) failed",libvlc_errmsg());
@@ -439,6 +463,7 @@ mpv_event *mpv_wait_event(mpv_handle *p,double timeout){
     if(__atomic_exchange_n(&hw_failed,0,__ATOMIC_ACQ_REL) && !p->software_retry){
         libvlc_media_t *old=libvlc_media_player_get_media(p->mp);
         char *url=old?libvlc_media_get_mrl(old):NULL;
+        if(old)libvlc_media_release(old);
         libvlc_time_t pos=p->loaded?p->last_video_time:0;
         libvlc_time_t length=libvlc_media_player_get_length(p->mp);
         if(length>0&&pos>=length-30000)pos=0;
@@ -450,6 +475,9 @@ mpv_event *mpv_wait_event(mpv_handle *p,double timeout){
             libvlc_free(url);
             if(m){
                 libvlc_media_add_option_flag(m,":no-ps5vdec",libvlc_media_option_trusted);
+                libvlc_media_add_option_flag(m,":avcodec-hw=none",libvlc_media_option_trusted);
+                libvlc_media_add_option_flag(m,":no-drop-late-frames",libvlc_media_option_trusted);
+                libvlc_media_add_option_flag(m,":no-skip-frames",libvlc_media_option_trusted);
                 char opt[600];
                 p->open_serial=__atomic_add_fetch(&next_open_serial,1,__ATOMIC_RELAXED);
                 snprintf(opt,sizeof(opt),":ps5http-serial=%ld",p->open_serial);
@@ -493,13 +521,35 @@ mpv_event *mpv_wait_event(mpv_handle *p,double timeout){
         e.event_id=MPV_EVENT_END_FILE;e.data=&end;return &e;
     }
     if(!p->loaded){
+        Uint32 now=SDL_GetTicks();
+        if(!p->stats_at||now-p->stats_at>=1000){
+            p->stats_at=now;
+            p->video_tracks=libvlc_video_get_track_count(p->mp);
+            libvlc_media_t *m=libvlc_media_player_get_media(p->mp);
+            libvlc_media_stats_t st={0};
+            if(m){
+                if(libvlc_media_get_stats(m,&st)){
+                    p->core_decoded=st.i_decoded_video;
+                    p->core_shown=st.i_displayed_pictures;
+                    p->core_lost=st.i_lost_pictures;
+                }
+                libvlc_media_release(m);
+            }
+        }
         SDL_LockMutex(p->lock);unsigned frames=p->serial;SDL_UnlockMutex(p->lock);
-        if(s==libvlc_Playing&&!p->playing_since)p->playing_since=SDL_GetTicks();
-        if(!frames&&p->playing_since&&SDL_GetTicks()-p->playing_since>8000 &&
-           __atomic_load_n(&hw_active,__ATOMIC_ACQUIRE)&&!p->software_retry)
+        SDL_LockMutex(p->audio_lock);unsigned audio=p->audio_packets;SDL_UnlockMutex(p->audio_lock);
+        if((s==libvlc_Playing||audio>0)&&!p->playing_since)p->playing_since=now;
+        if(!frames&&p->playing_since&&now-p->playing_since>8000 && !p->software_retry){
+            /* A failed OpenDecoder may never announce hw_active. Do not
+               wait indefinitely for a callback that was never installed. */
             __atomic_store_n(&hw_failed,1,__ATOMIC_RELEASE);
+        }
         if(frames){
             p->loaded=1;e.event_id=MPV_EVENT_FILE_LOADED;
+        }else if(p->software_retry&&p->opened_at&&now-p->opened_at>20000){
+            snprintf(p->error,sizeof(p->error),"%s",ps5_kitchen_diagnostic(p));
+            p->active=0;end.reason=MPV_END_FILE_REASON_ERROR;end.error=-1;
+            e.event_id=MPV_EVENT_END_FILE;e.data=&end;
         }
     }
     return &e;
@@ -507,7 +557,19 @@ mpv_event *mpv_wait_event(mpv_handle *p,double timeout){
 int mpv_request_log_messages(mpv_handle *p,const char *level){(void)p;(void)level;return 0;}
 const char *mpv_error_string(int code){return code<0?"libVLC playback/render error":"OK";}
 const char *ps5_kitchen_last_error(mpv_handle *p){return p?(p->error[0]?p->error:NULL):init_error;}
-const char *ps5_kitchen_diagnostic(mpv_handle *p){return p?p->diag:"VLC not initialized";}
+const char *ps5_kitchen_diagnostic(mpv_handle *p){
+    static char details[256];
+    if(!p)return "VLC not initialized";
+    char warning[128];
+    SDL_AtomicLock(&vlc_log_lock);memcpy(warning,vlc_video_warning,sizeof(warning));SDL_AtomicUnlock(&vlc_log_lock);
+    SDL_LockMutex(p->lock);
+    snprintf(details,sizeof(details),"%s V:%d D:%d L:%d S:%u P:%u F:%u %.4s %.100s",
+        p->software_retry?"SW":__atomic_load_n(&hw_active,__ATOMIC_ACQUIRE)?"HW":"AUTO",
+        p->video_tracks,p->core_decoded,p->core_lost,p->setup_count,p->decoded,p->display_count,
+        p->chroma,warning);
+    SDL_UnlockMutex(p->lock);
+    return details;
+}
 void mpv_terminate_destroy(mpv_handle *p){
     if(!p)return;stop(p);if(p->mp)libvlc_media_player_release(p->mp);
     if(p->vlc)libvlc_release(p->vlc);
