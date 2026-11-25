@@ -84,7 +84,7 @@ static int track_count,selected_track,subtitle_picker;
 static IptvCatalog ps5_tv_channels={0},ps5_tv_favorites={0};
 static int ps5_tv_country=0,ps5_tv_selection=0,ps5_tv_country_count=0;
 static int ps5_tv_genre=IPTV_ALL,ps5_tv_genre_selection=0,ps5_tv_show_favorites=0;
-static int ps5_tv_filter_focus=0; /* 0 grid, 1 country, 2 genre, 3 favorite */
+static int ps5_tv_filter_focus=0; /* 0 grid, 1 country, 2 genre, 3 favorites, 4 search */
 
 /* The web IPTV search covers channel names and playlist genres. UTF-8
    Cyrillic case folding keeps the PS5 Ukrainian keyboard practical. */
@@ -1816,36 +1816,67 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
                     TR("У вибраному поки немає каналів","No favorite channels yet"):
                     TR("Каналів не знайдено","No channels found"),
                     UI_EDGE,271,1216,96,p->font_big,.73f,.77f,.82f);
+            /* The web IPTV page uses a search box and compact horizontal
+               channel cards, not the old 6x2 square-logo homebrew grid. */
+            box_alpha(p,32,158,1216,46,.102f,.137f,.166f,1.f,14);
+            if(ps5_tv_filter_focus==4)selection_frame(p,32,158,1216,46);
+            search_icon(p,61,179,.102f,.137f,.166f);
+            text_font(p,ps5_tv_query[0]?ps5_tv_query:
+                       TR("Знайти телеканал…   R3 — пошук · L3 — очистити",
+                          "Find a TV channel…   R3 — search · L3 — clear"),
+                      95,164,1109,p->font_small,.90f,.94f,.96f);
+            press_preview(p,32,158,1216,46,14);
+
+            int count=ps5_tv_visible_count();
+            if(!count){
+                text_center_button(p,ps5_tv_show_favorites?
+                    TR("У вибраному поки немає каналів","No favorite channels yet"):
+                    TR("Каналів не знайдено","No matching channels"),
+                    UI_EDGE,318,1216,110,p->font_big,.73f,.78f,.84f);
+            }
             const int page_start=ps5_tv_selection/12*12;
             int logo_budget=1;
             for(int i=page_start;i<count && i<page_start+12;i++){
                 const IptvChannel *channel=ps5_tv_channel(i);
                 if(!channel)continue;
-                const int local=i-page_start;
-                int x=38+(local%6)*202,y=177+(local/6)*211;
-                box_alpha(p,x,y,184,184,.19f,.22f,.26f,1.f,16);
+                int local=i-page_start;
+                int x=38+(local%4)*305,y=219+(local/4)*129;
+                box_alpha(p,x,y,285,108,.102f,.133f,.161f,1.f,12);
                 if(i==ps5_tv_selection && !ps5_tv_filter_focus)
-                    selection_frame(p,x,y,184,184);
-                int image_w=0,image_h=0;
-                UiTexture logo=logo_texture(channel->logo,&logo_budget,&image_w,&image_h);
-                if(logo && image_w>0 && image_h>0){
-                    float scale=150.f/(float)(image_w>image_h?image_w:image_h);
-                    int rw=(int)fmaxf(1,image_w*scale);
-                    int rh=(int)fmaxf(1,image_h*scale);
-                    SDL_Rect target={x+(184-rw)/2,y+7+(150-rh)/2,rw,rh};
-                    SDL_RenderCopy(ui_renderer,(SDL_Texture*)(uintptr_t)logo,NULL,&target);
-                }else text_center_button(p,"TV",x,y+18,184,72,p->font_big,.75f,.79f,.82f);
-                text_center_button(p,channel->title,x+8,y+98,168,55,p->font_small,
-                                   .95f,.97f,.99f);
-                const int favorite=iptv_favorite_index(&ps5_tv_favorites,channel->id)>=0;
-                box_alpha(p,x+144,y+7,31,31,.10f,.13f,.17f,.93f,10);
-                text_center_button(p,favorite?"★":"☆",x+144,y+7,31,31,
-                                   p->font_small,.96f,.88f,.62f);
-                press_preview(p,x,y,184,184,16);
+                    selection_frame(p,x,y,285,108);
+                /* White icon tile like UAPlay-web .channel-logo. */
+                int previous=ui_theme_enabled;
+                ui_theme_enabled=0;
+                box_alpha(p,x+12,y+17,73,73,.97f,.98f,.98f,1.f,8);
+                ui_theme_enabled=previous;
+                int iw=0,ih=0;
+                UiTexture logo=logo_texture(channel->logo,&logo_budget,&iw,&ih);
+                if(logo && iw>0 && ih>0){
+                    float scale=61.f/(float)(iw>ih?iw:ih);
+                    int rw=(int)fmaxf(1,iw*scale);
+                    int rh=(int)fmaxf(1,ih*scale);
+                    SDL_Rect target={x+18+(61-rw)/2,y+23+(61-rh)/2,rw,rh};
+                    SDL_RenderCopy(ui_renderer,(SDL_Texture*)(uintptr_t)logo,
+                                   NULL,&target);
+                }else text_center_button(p,"TV",x+21,y+31,54,38,p->font_small,
+                                         .30f,.38f,.44f);
+                wrapped(p,channel->title,x+98,y+12,150,2,25,p->font_small,
+                        .97f,.98f,.99f);
+                text_font(p,channel->groups && channel->groups[0]?
+                          channel->groups:TR("Прямий ефір","Live TV"),
+                          x+98,y+78,174,p->font_tiny,.67f,.73f,.77f);
+                const int favorite=iptv_favorite_index(&ps5_tv_favorites,
+                                                       channel->id)>=0;
+                text_center_button(p,favorite?"★":"☆",x+247,y+8,32,34,
+                                   p->font_small,favorite?.24f:.82f,
+                                   favorite?.84f:.88f,favorite?.72f:.94f);
+                press_preview(p,x,y,285,108,12);
             }
             if(count){
-                const IptvChannel *selected=ps5_tv_channel(ps5_tv_selection);
-                if(selected)text_muted(p,selected->title,54,630,1150);
+                char info[110];
+                snprintf(info,sizeof(info),TR("%d каналів · L1/R1 — сторінки",
+                                              "%d channels · L1/R1 — pages"),count);
+                text_muted(p,info,51,626,1160);
             }
             footer(p,status);
             return;
