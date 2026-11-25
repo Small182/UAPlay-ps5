@@ -11,6 +11,9 @@
 
 #include <SDL.h>
 #include <kitchensink2/kitchensink.h>
+#include <libavformat/avformat.h>
+#include <libavutil/dict.h>
+#include <libavutil/error.h>
 #ifdef UAPLAY_PS5_SOFTWARE
 #include "posters.h"
 #else
@@ -18,6 +21,7 @@
 #include <GL/glcorearb.h>
 #endif
 #include <math.h>
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -114,6 +118,54 @@ int mpv_set_option_string(mpv_handle *p,const char *name,const char *value) {
     return 0;
 }
 
+/* Kitchensink v2's public source structure owns an AVFormatContext.
+   Construct it with the actual HTTP options instead of dropping headers
+   in Kit_CreateSourceFromUrl(), which passes a NULL dictionary. */
+static int startup_interrupt(void *opaque){
+    const mpv_handle *p=opaque;
+    return SDL_GetTicks()-p->open_tick>=25000u;
+}
+static Kit_Source *open_media_source(mpv_handle *p,const char *url){
+    AVFormatContext *format=avformat_alloc_context();
+    if(!format){p->error=AVERROR(ENOMEM);return NULL;}
+    format->interrupt_callback.callback=startup_interrupt;
+    format->interrupt_callback.opaque=p;
+    AVDictionary *options=NULL;
+    int remote=!strncmp(url,"https://",8)||!strncmp(url,"http://",7);
+    if(remote){
+        if(p->user_agent[0])av_dict_set(&options,"user_agent",p->user_agent,0);
+        if(p->referrer[0])av_dict_set(&options,"referer",p->referrer,0);
+        av_dict_set(&options,"rw_timeout","15000000",0);
+        av_dict_set(&options,"tls_verify","1",0);
+        av_dict_set(&options,"ca_file",UAPLAY_ASSET("cacert.pem"),0);
+    }
+    av_dict_set(&options,"probesize","5000000",0);
+    av_dict_set(&options,"analyzeduration","5000000",0);
+    int ret=avformat_open_input(&format,url,NULL,&options);
+    av_dict_free(&options);
+    if(ret<0){
+        video_diagnostic(p,"FFmpeg open input failed",ret);
+        p->error=ret;
+        if(format)avformat_close_input(&format);
+        return NULL;
+    }
+    video_diagnostic(p,"FFmpeg input opened",0);
+    ret=avformat_find_stream_info(format,NULL);
+    if(ret<0){
+        video_diagnostic(p,"FFmpeg stream probe failed",ret);
+        p->error=ret;
+        avformat_close_input(&format);
+        return NULL;
+    }
+    /* The deadline is for startup only, never for later playback. */
+    format->interrupt_callback.callback=NULL;
+    format->interrupt_callback.opaque=NULL;
+    Kit_Source *source=calloc(1,sizeof(*source));
+    if(!source){avformat_close_input(&format);p->error=AVERROR(ENOMEM);return NULL;}
+    source->format_ctx=format;
+    return source;
+}
+
 static int open_stream(mpv_handle *p,const char *url) {
     if(!p || !p->ready || !url || !*url)return -1;
     clear_stream(p);
@@ -123,7 +175,7 @@ static int open_stream(mpv_handle *p,const char *url) {
     video_diagnostic(p,"Opening media source",0);
     /* Kit_CreateSourceFromUrl may wait for the remote server. Networking, TLS,
        codecs and stream headers still require real-hardware validation. */
-    p->source=Kit_CreateSourceFromUrl(url);
+    p->source=open_media_source(p,url);
     if(!p->source)goto error;
     video_diagnostic(p,"Media source opened",0);
     Kit_VideoFormatRequest video;
@@ -167,11 +219,13 @@ static int open_stream(mpv_handle *p,const char *url) {
     p->event_stage=1;
     return 0;
 error:
-    snprintf(p->error_text,sizeof(p->error_text),"%s",Kit_GetError());
+    if(p->error<0)av_strerror(p->error,p->error_text,sizeof(p->error_text));
+    else snprintf(p->error_text,sizeof(p->error_text),"%s",Kit_GetError());
     fprintf(stderr,"UAPlay PS5 video open: %s\n",p->error_text);
     clear_stream(p);
-    video_diagnostic(p,"Open failed",-1);
-    p->error=-1;p->event_stage=3;
+    if(!p->error)p->error=-1;
+    video_diagnostic(p,"Open failed",p->error);
+    p->event_stage=3;
     return -1;
 }
 
@@ -278,7 +332,10 @@ mpv_event *mpv_wait_event(mpv_handle *p,double timeout) {
 }
 const char *mpv_error_string(int code) {
     if(code==-2)return "Декодер зупинився до першого кадру";
-    return code<0?"Помилка SDL_kitchensink / FFmpeg":"OK";
+    if(code==-1)return "Помилка SDL_kitchensink / FFmpeg";
+    static char message[128];
+    if(code<0 && av_strerror(code,message,sizeof(message))==0)return message;
+    return code<0?"Помилка FFmpeg":"OK";
 }
 void mpv_terminate_destroy(mpv_handle *p) {
     if(!p)return;
