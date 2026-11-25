@@ -3834,8 +3834,8 @@ int main(void) {
 #ifdef __PS5__
                 if(key==SDL_CONTROLLER_BUTTON_X && settings_selected==SETTING_WEB_API){
                     mkdir(UAPLAY_DATA_ROOT,0777);
-                    mkdir(UAPLAY_DATA_DIR,0777);
-                    FILE *setting=fopen(UAPLAY_DATA_DIR "/web-api-url.txt","wb");
+                    mkdir(UAPLAY_CATALOG_DIR,0777);
+                    FILE *setting=fopen(UAPLAY_CATALOG_DIR "/web-api-url.txt","wb");
                     if(setting){
                         fputs("disabled\n",setting);
                         if(fclose(setting)==0){
@@ -3909,8 +3909,8 @@ int main(void) {
                                        "Enter a hostname without https://, spaces or /"));
                             else{
                                 mkdir(UAPLAY_DATA_ROOT,0777);
-                                mkdir(UAPLAY_DATA_DIR,0777);
-                                FILE *setting=fopen(UAPLAY_DATA_DIR "/web-api-url.txt","wb");
+                                mkdir(UAPLAY_CATALOG_DIR,0777);
+                                FILE *setting=fopen(UAPLAY_CATALOG_DIR "/web-api-url.txt","wb");
                                 if(setting){
                                     fprintf(setting,"https://%s\n",hostname);
                                     if(fclose(setting)==0){
