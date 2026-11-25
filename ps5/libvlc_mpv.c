@@ -6,6 +6,9 @@
 #include "../ps5/kitchensink_mpv.h"
 #include "playback.h"
 #include "posters.h"
+#include "platform_paths.h"
+#include <sys/stat.h>
+#include <stdarg.h>
 #include <SDL.h>
 #include <vlc/vlc.h>
 #include <stdlib.h>
@@ -79,6 +82,19 @@ void vlc_ps5_copy_plane(uint8_t *dst,size_t dst_pitch,const uint8_t *src,
         memcpy(dst,src,bytes);
         dst+=dst_pitch;src+=src_pitch;
     }
+}
+static char init_error[256]="VLC: initialization not attempted";
+static void init_status(const char *stage,const char *detail){
+    snprintf(init_error,sizeof(init_error),"VLC %s%s%s",stage,detail&&*detail?": ":"",detail&&*detail?detail:"");
+    fprintf(stderr,"%s\n",init_error);
+    FILE *f=fopen(UAPLAY_DATA_ROOT "/vlc-init.log","a");
+    if(f){fprintf(f,"%s\n",init_error);fclose(f);}
+}
+static void vlc_console_log(void *opaque,int level,const libvlc_log_t *ctx,const char *fmt,va_list args){
+    (void)opaque;(void)ctx;
+    if(level<LIBVLC_WARNING)return;
+    char line[256];vsnprintf(line,sizeof(line),fmt,args);
+    fprintf(stderr,"VLC: %s\n",line);
 }
 struct mpv_handle {
     libvlc_instance_t *vlc;
@@ -176,19 +192,46 @@ static void stop(mpv_handle *p){
 }
 mpv_handle *mpv_create(void){
     mpv_handle *p=calloc(1,sizeof(*p));
-    if(!p)return NULL;
+    if(!p){init_status("calloc","out of memory");return NULL;}
     p->lock=SDL_CreateMutex();p->volume=100;
-    if(!p->lock){free(p);return NULL;}return p;
+    if(!p->lock){init_status("SDL_CreateMutex",SDL_GetError());free(p);return NULL;}return p;
 }
 int mpv_initialize(mpv_handle *p){
+    if(!p){init_status("initialize","null handle");return -1;}
+    mkdir(UAPLAY_DATA_ROOT,0777);
+    mkdir(UAPLAY_DATA_ROOT "/cache",0777);
+    mkdir(UAPLAY_DATA_ROOT "/.cache",0777);
+    setenv("HOME",UAPLAY_DATA_ROOT,1);
+    setenv("TMPDIR",UAPLAY_DATA_ROOT "/cache",1);
+    init_status("hardware probe",NULL);
     ps5_vlc_hw_init();
-    const char *args[]={"--ps5vdec","--no-video-title-show","--no-osd","--no-plugins-cache",
-        "--avcodec-hw=none","--network-caching=2000","--verbose=-1"};
-    if(!p)return -1;
+    /* Match the pinned VLC-PS5 player's options. The static ps5vdec plugin
+       enables hardware decoding by default; no explicit flag is required. */
+    const char *args[]={
+        "--ignore-config","--no-video-title-show","--no-sub-autodetect-file",
+        "--aout=adummy","--adaptive-use-access","--subsdec-encoding=UTF-8",
+        "--gnutls-dir-trust=/app0/certs","--no-gnutls-system-trust",
+        "--freetype-font=/app0/fonts/subtitle.ttf",
+        "--ssa-fontsdir=/app0/fonts/fallback","--verbose=-1"
+    };
+    init_status("libvlc_new",NULL);
     p->vlc=libvlc_new(sizeof(args)/sizeof(args[0]),args);
-    if(!p->vlc)return -1;
+    if(!p->vlc){
+        init_status("libvlc_new failed",libvlc_errmsg());
+        libvlc_clearerr();
+        const char *minimal[]={"--ignore-config","--verbose=-1"};
+        p->vlc=libvlc_new(2,minimal);
+        if(!p->vlc){
+            init_status("libvlc_new (minimal) failed",libvlc_errmsg());
+            return -1;
+        }
+        init_status("minimal options accepted",NULL);
+    }
+    libvlc_log_set(p->vlc,vlc_console_log,NULL);
+    libvlc_set_user_agent(p->vlc,"UAPlay","VLC/3.0.24 PS5");
+    init_status("libvlc_media_player_new",NULL);
     p->mp=libvlc_media_player_new(p->vlc);
-    if(!p->mp)return -1;
+    if(!p->mp){init_status("libvlc_media_player_new failed",libvlc_errmsg());return -1;}
     libvlc_video_set_callbacks(p->mp,video_lock,video_unlock,video_display,p);
     libvlc_video_set_format_callbacks(p->mp,video_setup,video_cleanup);
     SDL_AudioSpec spec={0};
@@ -198,6 +241,7 @@ int mpv_initialize(mpv_handle *p){
     libvlc_audio_set_callbacks(p->mp,audio_play,audio_pause,audio_resume,audio_flush,audio_drain,p);
     libvlc_audio_set_format(p->mp,"S16N",48000,2);
     snprintf(p->diag,sizeof(p->diag),"libVLC %s",libvlc_get_version());
+    init_status("ready",p->diag);
     return 0;
 }
 int mpv_set_option_string(mpv_handle *p,const char *n,const char *v){(void)p;(void)n;(void)v;return 0;}
@@ -308,7 +352,7 @@ mpv_event *mpv_wait_event(mpv_handle *p,double timeout){
 }
 int mpv_request_log_messages(mpv_handle *p,const char *level){(void)p;(void)level;return 0;}
 const char *mpv_error_string(int code){return code<0?"libVLC playback/render error":"OK";}
-const char *ps5_kitchen_last_error(mpv_handle *p){return p&&p->error[0]?p->error:NULL;}
+const char *ps5_kitchen_last_error(mpv_handle *p){return p?(p->error[0]?p->error:NULL):init_error;}
 const char *ps5_kitchen_diagnostic(mpv_handle *p){return p?p->diag:"VLC not initialized";}
 void mpv_terminate_destroy(mpv_handle *p){
     if(!p)return;stop(p);if(p->mp)libvlc_media_player_release(p->mp);
@@ -316,7 +360,8 @@ void mpv_terminate_destroy(mpv_handle *p){
     free(p->frame);SDL_DestroyMutex(p->lock);free(p);
 }
 int mpv_render_context_create(mpv_render_context **out,mpv_handle *p,const mpv_render_param *args){
-    (void)args;if(!out||!p)return -1;*out=calloc(1,sizeof(**out));if(!*out)return -1;(*out)->p=p;return 0;
+    (void)args;if(!out||!p){init_status("render context","invalid arguments");return -1;}
+    *out=calloc(1,sizeof(**out));if(!*out){init_status("render context","out of memory");return -1;}(*out)->p=p;return 0;
 }
 int mpv_render_context_render(mpv_render_context *c,const mpv_render_param *args){
     (void)args;if(!c||!ui_renderer)return -1;mpv_handle *p=c->p;

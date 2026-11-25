@@ -2763,6 +2763,14 @@ static int render_ps4_video(mpv_render_context *render){
 }
 #endif
 
+static const char *player_init_message(void){
+#ifdef UAPLAY_PS5_SOFTWARE
+    const char *detail=ps5_kitchen_last_error(NULL);
+    return detail?detail:"Відеоплеєр VLC не ініціалізовано";
+#else
+    return "Відеоплеєр не ініціалізовано";
+#endif
+}
 static int open_player(mpv_handle **handle,mpv_render_context **render){
     if(*render)return 1;
     mpv_handle *player=mpv_create();
@@ -3813,7 +3821,7 @@ int main(void) {
                             controls_until=SDL_GetTicks()+3000;
                             player_return_page=EPISODES;page=PLAYER;
                         }
-                    } else if(!render) snprintf(message,sizeof(message),"Плеєр mpv не ініціалізовано");
+                    } else if(!render) snprintf(message,sizeof(message),"%s",player_init_message());
                 }
                 continue;
             }
@@ -4360,7 +4368,7 @@ int main(void) {
                     char url[2048]={0};
                     message[0]=0;
                     if(!open_player(&player,&render)){
-                        snprintf(message,sizeof(message),"Відеоплеєр не ініціалізовано");
+                        snprintf(message,sizeof(message),"%s",player_init_message());
                     }else if(uakino_resolve(&sources[source],url,sizeof(url),message,sizeof(message))){
                         snprintf(pending_subtitle,sizeof(pending_subtitle),"%s",uakino_resolved_subtitle());
                         playing_movie=movies[chosen];
