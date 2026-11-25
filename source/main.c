@@ -132,7 +132,11 @@ static const double video_max[]={2.0,130,100,100,100,10,4};
 /* HLS bitrate ceilings approximate the requested picture height. Exact
    360/480/720/1080p depends on variant resolutions offered by the source. */
 static const char *hls_presets[]={"max","800000","1500000","3000000","6000000"};
+#ifdef UAPLAY_USE_VLC_COMPAT
+static const char *hls_labels[]={"Максимальна","360p","480p","720p","1080p"};
+#else
 static const char *hls_labels[]={"Авто","360p","480p","720p","1080p"};
+#endif
 
 static void rebuild_seasons(void) {
     season_count=0;
@@ -2551,6 +2555,9 @@ static void stick_arrow(SDL_GameController *pad,int player_mode,
 
 static void configure_stream(mpv_handle *player,const char *url) {
     if(!player)return;
+#ifdef UAPLAY_USE_VLC_COMPAT
+    apply_hls_quality(player);
+#endif
 #ifdef __PS5__
     mpv_set_property_string(player,"user-agent","Mozilla/5.0 (PlayStation 5; UAPlay/1.0)");
 #elif defined(__PS4__)

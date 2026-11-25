@@ -141,6 +141,7 @@ struct mpv_handle {
     int active,started,loaded,volume;
     long open_serial;
     int software_retry;
+    unsigned quality_height; /* zero = highest available up to 1080p */
     libvlc_time_t resume_at;
     char ua[160],referer[512],error[256],diag[160];
 };
@@ -402,6 +403,15 @@ int ps5_kitchen_set_volume(mpv_handle *p,double v){
 }
 int mpv_set_property_string(mpv_handle *p,const char *n,const char *v){
     if(!p||!p->mp||!n||!v)return -1;
+    if(!strcmp(n,"options/hls-bitrate")||!strcmp(n,"hls-bitrate")){
+        if(!strcmp(v,"max")||!strcmp(v,"auto"))p->quality_height=0;
+        else if(!strcmp(v,"800000"))p->quality_height=360;
+        else if(!strcmp(v,"1500000"))p->quality_height=480;
+        else if(!strcmp(v,"3000000"))p->quality_height=720;
+        else if(!strcmp(v,"6000000"))p->quality_height=1080;
+        else return -1;
+        return 0;
+    }
     if(!strcmp(n,"user-agent")){snprintf(p->ua,sizeof(p->ua),"%s",v);return 0;}
     if(!strcmp(n,"referrer")){snprintf(p->referer,sizeof(p->referer),"%s",v);return 0;}
     if(!strcmp(n,"pause")){libvlc_media_player_set_pause(p->mp,!strcmp(v,"yes")||!strcmp(v,"true"));return 0;}
@@ -421,6 +431,17 @@ int mpv_get_property(mpv_handle *p,const char *n,mpv_format f,void *out){
     if(f==MPV_FORMAT_FLAG&&!strcmp(n,"pause")){*(int*)out=libvlc_media_player_get_state(p->mp)==libvlc_Paused;return 0;}
     return -1;
 }
+static void apply_stream_quality(mpv_handle *p,libvlc_media_t *m){
+    /* VLC 3 adaptive demuxer: choose the best representation that fits
+       the requested resolution. These are caps, not promises of a variant.
+       Progressive MP4 and single-variant HLS remain unchanged. */
+    char option[64];
+    unsigned height=p->quality_height?p->quality_height:1080;
+    libvlc_media_add_option_flag(m,":adaptive-logic=highest",libvlc_media_option_trusted);
+    snprintf(option,sizeof(option),":adaptive-maxheight=%u",height);
+    libvlc_media_add_option_flag(m,option,libvlc_media_option_trusted);
+    libvlc_media_add_option_flag(m,":adaptive-maxwidth=1920",libvlc_media_option_trusted);
+}
 int mpv_command_async(mpv_handle *p,unsigned long long userdata,const char **a){
     (void)userdata;if(!p||!p->mp||!a||!a[0])return -1;
     if(!strcmp(a[0],"loadfile")&&a[1]){
@@ -433,6 +454,7 @@ int mpv_command_async(mpv_handle *p,unsigned long long userdata,const char **a){
         libvlc_media_add_option(m,opt);
         if(p->ua[0]){snprintf(opt,sizeof(opt),":http-user-agent=%s",p->ua);libvlc_media_add_option(m,opt);}
         if(p->referer[0]){snprintf(opt,sizeof(opt),":http-referrer=%s",p->referer);libvlc_media_add_option(m,opt);}
+        apply_stream_quality(p,m);
         libvlc_media_player_set_media(p->mp,m);libvlc_media_release(m);
         p->active=1;p->opened_at=SDL_GetTicks();snprintf(p->diag,sizeof(p->diag),"VLC opening");
         audio_resume(p,0);
@@ -493,7 +515,8 @@ mpv_event *mpv_wait_event(mpv_handle *p,double timeout){
                 libvlc_media_add_option(m,opt);
                 if(p->ua[0]){snprintf(opt,sizeof(opt),":http-user-agent=%s",p->ua);libvlc_media_add_option(m,opt);}
                 if(p->referer[0]){snprintf(opt,sizeof(opt),":http-referrer=%s",p->referer);libvlc_media_add_option(m,opt);}
-                libvlc_media_player_set_media(p->mp,m);libvlc_media_release(m);
+                apply_stream_quality(p,m);
+        libvlc_media_player_set_media(p->mp,m);libvlc_media_release(m);
                 p->active=1;p->opened_at=SDL_GetTicks();
                 snprintf(p->diag,sizeof(p->diag),"VLC hardware failed; software retry");
                 audio_resume(p,0);
