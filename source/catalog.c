@@ -3135,8 +3135,83 @@ static int movy_episodes(const char *url,Episode *items,int max,char *error,int 
     return count;
 }
 
+
+#ifdef __PS5__
+/* UAPlay-web media API provides seasons, episode numbers and voice variants
+   directly, so the PS5 can preserve the browser port's serial selection
+   without reproducing every provider's HTML layout in C. */
+static int uaplay_web_api_episodes(const Source *source,Episode *items,int max,
+                                   char *error,int error_size){
+    const char *provider_id=NULL;
+    if(!uaplay_web_api_media_provider(source->url,&provider_id))return -1;
+    char origin[256];
+    if(!uaplay_web_api_origin(origin,sizeof(origin)))return -1;
+    char *json=uaplay_web_api_media(source->url,error,error_size);
+    if(!json)return -1;
+    const char *end_json=json+strlen(json);
+    const char *keys[]={"episodes","streams"};
+    int count=0;
+    for(int a=0;a<2 && count<max;a++){
+        const char *cursor=json_array_start(json,end_json,keys[a]);
+        while(cursor && cursor<end_json && count<max){
+            cursor=json_ws(cursor);
+            if(*cursor==']')break;
+            if(*cursor==','){cursor++;continue;}
+            if(*cursor!='{')break;
+            const char *end=object_end(cursor);
+            if(!end || end>end_json)break;
+            char number[24]={0},season[24]={0};
+            char video[1024]={0},voice[96]={0},label[192]={0};
+            json_field(cursor,end,"season",season,sizeof(season));
+            json_field(cursor,end,"episode",number,sizeof(number));
+            json_field(cursor,end,"url",video,sizeof(video));
+            json_field(cursor,end,"voice",voice,sizeof(voice));
+            json_field(cursor,end,"label",label,sizeof(label));
+            int s=atoi(season),e=atoi(number);
+            if(s==0 && e>0)s=1;
+            if(s>0 && s<=999 && e>0 && e<=10000 &&
+               !strncmp(video,"https://",8)){
+                int duplicate=0;
+                for(int i=0;i<count;i++)
+                    if(items[i].season==s && items[i].number==e &&
+                       !strcmp(items[i].voice,voice) &&
+                       !strcmp(items[i].url,video))duplicate=1;
+                if(!duplicate){
+                    Episode *episode=&items[count++];
+                    memset(episode,0,sizeof(*episode));
+                    episode->season=s;
+                    episode->number=e;
+                    snprintf(episode->url,sizeof(episode->url),"%s",video);
+                    snprintf(episode->voice,sizeof(episode->voice),"%s",
+                             voice[0]?voice:TR("Основна","Main"));
+                    if(label[0])
+                        snprintf(episode->title,sizeof(episode->title),"%s",label);
+                    else
+                        snprintf(episode->title,sizeof(episode->title),
+                                 TR("Сезон %d · Серія %d","Season %d · Episode %d"),s,e);
+                }
+            }
+            cursor=end;
+        }
+    }
+    free(json);
+    if(count>0){
+        qsort(items,(size_t)count,sizeof(*items),episode_order);
+        error[0]=0;
+    }
+    return count;
+}
+#endif
+
 int uakino_episodes(const Source *source, Episode *items, int max,
                     char *error, int error_size) {
+#ifdef __PS5__
+    int web_episodes=uaplay_web_api_episodes(source,items,max,error,error_size);
+    if(web_episodes>0)return web_episodes;
+    /* Empty results do not prove a series has no episodes; the old native
+       playlist parser remains an important fallback. */
+    error[0]=0;
+#endif
     if(!strncmp(source->url,MOVY_SERIES_URL,sizeof(MOVY_SERIES_URL)-1))
         return movy_episodes(source->url,items,max,error,error_size);
     if(strstr(source->url,"animeon.club/api/player/")){
