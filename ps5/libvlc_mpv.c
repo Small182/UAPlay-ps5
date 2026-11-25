@@ -71,9 +71,7 @@ int vlc_ps5_stream_cancelled(long serial){
     return serial>0 && serial<=__atomic_load_n(&cancelled_serial,__ATOMIC_ACQUIRE);
 }
 int vlc_ps5_log_details(void){return 0;}
-/* Retain upstream's normal aligned heap fallback for large pictures. */
-void *vlc_ps5_big_alloc(size_t bytes){(void)bytes;return NULL;}
-int vlc_ps5_big_free(void *ptr){(void)ptr;return 0;}
+/* Large picture allocations use the upstream libps5compat implementation. */
 /* CPU renderer: copy only visible rows, including their distinct pitches. */
 void vlc_ps5_copy_plane(uint8_t *dst,size_t dst_pitch,const uint8_t *src,
                         size_t src_pitch,size_t bytes,unsigned rows){
