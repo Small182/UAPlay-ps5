@@ -1047,14 +1047,17 @@ static void box_alpha(Paint *p,int x,int y,int w,int h,float r,float g,float b,f
             float v=.2126f*r+.7152f*g+.0722f*b;
             r=g=b=fminf(.992f,.93f+.24f*v);
         }else{r=1.f-r;g=1.f-g;b=1.f-b;}
-    }else if(ui_theme_enabled && !ui_light_theme &&
-             p->tex==p->solid_tex && !ui_gradient_pass){
+    }
+#ifndef UAPLAY_PS5_SOFTWARE
+    else if(ui_theme_enabled && !ui_light_theme &&
+            p->tex==p->solid_tex && !ui_gradient_pass){
         float top=fmaxf(r,fmaxf(g,b)),bottom=fminf(r,fminf(g,b));
         if(top<=.55f && top-bottom<=.22f){
             float v=.2126f*r+.7152f*g+.0722f*b;
             r=g=b=.19f+.52f*v;
         }
     }
+#endif
 #if defined(__PS4__) || defined(UAPLAY_PS5_SOFTWARE)
     if(ui_renderer){
 #ifdef UAPLAY_PS5_SOFTWARE
@@ -1326,7 +1329,8 @@ static void summary(Paint *p,const char *description,int x,int y,int width){
     wrapped(p,description,x,y,width,3,28,p->font_small,.72f,.77f,.82f);
 }
 static void card_title(Paint *p,const char *title,int x,int y,int width){
-    wrapped(p,title,x,y,width,2,24,p->font_small,.95f,.96f,.98f);
+    /* Web desktop card title: 18px, one line with fixed card-width clipping. */
+    text_font(p,title,x,y,width,p->font_small,.95f,.96f,.98f);
 }
 static void accent_real(int preset,float *r,float *g,float *b){
     if(preset<0 || preset>=ACCENT_COUNT)preset=ACCENT_SYSTEM;
@@ -1378,12 +1382,22 @@ static void press_preview(Paint *p,int x,int y,int w,int h,int radius){
     ui_outline_width=old;
 }
 static void button(Paint *p,const char *label,int x,int y,int w,int h,int primary){
-    /* Flat fills: no simulated border/shadow in Basic White. */
-    float secondary=ui_light_theme?.11f:.15f;
-    box_alpha(p,x,y,w,h,primary?.89f:secondary,primary?.91f:secondary,
-              primary?.94f:secondary,1.f,14);
-    text_center_button(p,label,x,y,w,h,p->font_small,
-                       primary?.08f:.95f,primary?.10f:.96f,primary?.13f:.98f);
+    /* Web .btn.primary uses the saved accent; secondary #27333c.
+       Keep the accent visible in both dark and light themes. */
+    if(primary){
+        float r,g,b;accent_real(ui_accent_index,&r,&g,&b);
+        int previous=ui_theme_enabled;
+        ui_theme_enabled=0;
+        box_alpha(p,x,y,w,h,r,g,b,1.f,13);
+        const float brightness=.2126f*r+.7152f*g+.0722f*b;
+        const float dark=brightness>.44f?.08f:.99f;
+        text_center_button(p,label,x,y,w,h,p->font_small,
+                           dark,dark,dark);
+        ui_theme_enabled=previous;
+    }else{
+        box_alpha(p,x,y,w,h,.153f,.200f,.235f,1.f,13);
+        text_center_button(p,label,x,y,w,h,p->font_small,.95f,.96f,.98f);
+    }
 }
 /* Solid vector polygons for crisp icons, independent of font glyph support. */
 static void polygon(Paint *p,const float *points,int count,float r,float g,float b){
@@ -1616,9 +1630,10 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
 #endif
 #endif
     ui_theme_enabled=1;
-    ui_gradient_pass=1;
-    box_alpha(p,0,0,1280,720,.034f,.042f,.054f,1.f,0);
+    /* UAPlay-web's --bg: #090b0e. The previous fake gradient made the
+       entire PS5 UI look washed-out compared with the actual web theme. */
     ui_gradient_pass=0;
+    box_alpha(p,0,0,1280,720,.0353f,.0431f,.0549f,1.f,0);
 #ifdef UAPLAY_PS5_SOFTWARE
     if(wallpapers_texture()){
         SDL_Texture *bg=(SDL_Texture *)(uintptr_t)wallpapers_texture();
