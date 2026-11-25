@@ -2469,7 +2469,17 @@ static void draw_player_controls(Paint *p,mpv_handle *player) {
                     p->font_small,.96f,.97f,.99f);
     }
     box_alpha(p,0,507,1280,213,.027f,.034f,.044f,.93f,0);
-    text_tiny(p,"UAPlay  ·  Відтворення",35,519,430);
+    char playing_label[290];
+    const char *playing_title=playing_movie.id>0?playing_movie.title:NULL;
+    if(!playing_title || !*playing_title){
+        const IptvChannel *live=player_return_page==IPTV_CHANNELS?
+                                ps5_tv_channel(ps5_tv_selection):NULL;
+        playing_title=live?live->title:"";
+    }
+    snprintf(playing_label,sizeof(playing_label),"%s%s%s",
+             TR("UAPlay · Відтворення","UAPlay · Playing"),
+             *playing_title?" · ":"",playing_title);
+    text_tiny(p,playing_label,35,519,700);
     if(active_episode_variant>=0 &&
        catalog_next_episode(episodes,episode_count,active_episode_variant)>=0)
         text_tiny(p,
@@ -2489,24 +2499,49 @@ static void draw_player_controls(Paint *p,mpv_handle *player) {
     snprintf(right,sizeof(right),"%02d:%02d",(int)duration/60,(int)duration%60);
     text_small(p,left,35,552,85);
     text_small(p,right,1167,552,88);
-    box_alpha(p,70,649,178,5,.35f,.42f,.52f,1.f,3);
+    /* UAPlay-web fullscreen panel: volume left, three centered transport
+       circles, and small audio/subtitle/settings controls on the right. */
+    box_alpha(p,78,651,166,5,.35f,.42f,.52f,1.f,3);
     int volume=(int)video_options[1];
     if(volume<0)volume=0;if(volume>130)volume=130;
-    if(volume>0)box_alpha(p,70,649,volume*178/130,5,.92f,.94f,.97f,1.f,3);
-    box_alpha(p,70+volume*178/130-7,641,14,20,.96f,.97f,.98f,1.f,7);
-    char volume_label[24];snprintf(volume_label,sizeof(volume_label),"%d%%",volume);
-    text_tiny(p,volume_label,122,672,100);
-    const int centers[]={500,640,780,918,1028,1138};
-    const char *icons[]={"−10",paused?"▶":"Ⅱ","+10","","♪","CC"};
-    const char *labels[]={"10 с назад","Пауза / пуск","10 с вперед",
-                          "Параметри","Аудіо","Субтитри"};
-    for(int i=0;i<6;i++){
-        const int w=i==1?76:58,top=i==1?604:613;
-        box_alpha(p,centers[i]-w/2,top,w,w,.18f,.22f,.26f,.94f,w/2);
-        text_center(p,icons[i],centers[i]-w/2,top+(w-28)/2,w,
-                    i==0||i==2?p->font_small:p->font,.98f,.98f,.99f);
-        if(i==3)gear_icon(p,centers[i],643,.18f,.22f,.26f);
-        text_center(p,labels[i],centers[i]-72,678,144,p->font_tiny,.78f,.84f,.89f);
+    if(volume>0)
+        box_alpha(p,78,651,volume*166/130,5,.90f,.93f,.96f,1.f,3);
+    box_alpha(p,78+volume*166/130-7,643,14,20,.96f,.97f,.98f,1.f,7);
+    char volume_label[32];
+    snprintf(volume_label,sizeof(volume_label),
+             TR("Гучність %d%%","Volume %d%%"),volume);
+    text_tiny(p,volume_label,81,675,200);
+
+    const int centers[]={537,640,743};
+    const char *icons[]={"−10",paused?"▶":"Ⅱ","+10"};
+    for(int k=0;k<3;k++){
+        int w=k==1?90:66;
+        int x=centers[k]-w/2;
+        int top=k==1?593:605;
+        if(k==1){
+            box_alpha(p,x,top,w,w,.875f,.914f,.918f,1.f,w/2);
+            text_center(p,icons[k],x,top+(w-34)/2,w,
+                        p->font_big,.094f,.137f,.165f);
+        }else{
+            box_alpha(p,x,top,w,w,.125f,.180f,.207f,.88f,w/2);
+            text_center(p,icons[k],x,top+(w-27)/2,w,
+                        p->font_small,.97f,.98f,.99f);
+        }
+    }
+
+    /* Settings tools mirror the compact web control strip; actions remain
+       DualSense Options, Triangle (audio), Square (subtitles). */
+    const int tools_x[]={993,1084,1175};
+    const char *tool_labels[]={
+        TR("Опції","Options"),TR("Аудіо","Audio"),TR("Субт.","Subs")
+    };
+    for(int k=0;k<3;k++){
+        box_alpha(p,tools_x[k]-23,612,46,46,.125f,.180f,.207f,.88f,11);
+        if(k==0)gear_icon(p,tools_x[k],635,.125f,.180f,.207f);
+        else text_center(p,k==1?"♫":"CC",tools_x[k]-23,624,46,
+                         p->font_small,.96f,.98f,.99f);
+        text_center(p,tool_labels[k],tools_x[k]-43,673,86,
+                    p->font_tiny,.77f,.83f,.88f);
     }
 }
 static void draw_next_episode_prompt(Paint *p,const Episode *next,int seconds){
@@ -3167,19 +3202,19 @@ int main(void) {
                         }
                         continue;
                     }else if(ty>=603 && ty<703){
-                        if(tx>=60 && tx<259 && ty>=632 && ty<674){
-                            double volume=(tx-70)*130.0/178.0;
+                        if(tx>=60 && tx<258 && ty>=632 && ty<674){
+                            double volume=(tx-78)*130.0/166.0;
                             if(volume<0)volume=0;if(volume>130)volume=130;
                             video_options[1]=volume;
                             playback_set_value(player,"volume",volume);
                             continue;
                         }
-                        if(tx>=471 && tx<529)key=SDL_CONTROLLER_BUTTON_DPAD_LEFT;
-                        else if(tx>=602 && tx<678)key=SDL_CONTROLLER_BUTTON_A;
-                        else if(tx>=751 && tx<809)key=SDL_CONTROLLER_BUTTON_DPAD_RIGHT;
-                        else if(tx>=889 && tx<947)key=SDL_CONTROLLER_BUTTON_BACK;
-                        else if(tx>=999 && tx<1057)key=SDL_CONTROLLER_BUTTON_Y;
-                        else if(tx>=1109 && tx<1167)key=SDL_CONTROLLER_BUTTON_X;
+                        if(tx>=504 && tx<570)key=SDL_CONTROLLER_BUTTON_DPAD_LEFT;
+                        else if(tx>=595 && tx<685)key=SDL_CONTROLLER_BUTTON_A;
+                        else if(tx>=710 && tx<776)key=SDL_CONTROLLER_BUTTON_DPAD_RIGHT;
+                        else if(tx>=970 && tx<1016)key=SDL_CONTROLLER_BUTTON_BACK;
+                        else if(tx>=1061 && tx<1107)key=SDL_CONTROLLER_BUTTON_Y;
+                        else if(tx>=1152 && tx<1198)key=SDL_CONTROLLER_BUTTON_X;
                     }else continue;
                 }else if(page==IPTV_CHANNELS){
                     if(ty<78 && tx>=193 && tx<830){
