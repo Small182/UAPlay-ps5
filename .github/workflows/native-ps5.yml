@@ -1,4 +1,4 @@
-name: UAPlay PS5 native Switch main 0.5.10 UI port
+name: UAPlay PS5 native exFAT
 
 on:
   workflow_dispatch:
@@ -57,7 +57,7 @@ jobs:
         run: bash scripts/prepare-web-api.sh
       - name: Cross-compile the native PS5 UAPlay title
         run: bash scripts/build-ps5-software.sh
-      - name: Verify and archive the native title folder
+      - name: Verify native title files
         run: |
           title="$PS5_NATIVE_OUTPUT/$PS5_TITLE_ID"
           test -s "$title/eboot.bin"
@@ -66,13 +66,6 @@ jobs:
           test -s "$title/romfs/InterVariable.ttf"
           test -s "$title/romfs/cacert.pem"
           chmod 755 "$title/eboot.bin"
-          tar -C "$PS5_NATIVE_OUTPUT" -czf UAPlay-PS5-title-folder.tar.gz "$PS5_TITLE_ID"
-          tar -C "$PS5_NATIVE_OUTPUT" -dzf UAPlay-PS5-title-folder.tar.gz
-      - uses: actions/upload-artifact@v4
-        with:
-          name: UAPlay-PS5-Folder-UNTESTED
-          path: UAPlay-PS5-title-folder.tar.gz
-          if-no-files-found: error
       - name: Check exFAT packaging script
         run: bash -n scripts/package-native-exfat.sh
       - name: Create 64 KiB exFAT image for ShadowMountPlus
@@ -83,15 +76,3 @@ jobs:
           path: /tmp/uaplay-ps5-output/PPSA99283.exfat
           if-no-files-found: error
           retention-days: 14
-
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '8.0.x'
-      - name: Package and validate PS5 UFS2 image
-        run: bash scripts/package-native-ffpkg.sh
-      - uses: actions/upload-artifact@v4
-        with:
-          name: UAPlay-PS5-VideoOut-UNTESTED
-          path: /tmp/uaplay-ps5-output/PPSA99283.ffpkg
-          if-no-files-found: error
-
