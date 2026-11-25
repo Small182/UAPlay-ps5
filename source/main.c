@@ -3831,6 +3831,27 @@ int main(void) {
                 if(key==SDL_CONTROLLER_BUTTON_DPAD_UP && settings_selected>0)settings_selected--;
                 if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN && settings_selected<SETTING_COUNT-1)
                     settings_selected++;
+#ifdef __PS5__
+                if(key==SDL_CONTROLLER_BUTTON_X && settings_selected==SETTING_WEB_API){
+                    mkdir(UAPLAY_DATA_ROOT,0777);
+                    mkdir(UAPLAY_DATA_DIR,0777);
+                    FILE *setting=fopen(UAPLAY_DATA_DIR "/web-api-url.txt","wb");
+                    if(setting){
+                        fputs("disabled\n",setting);
+                        if(fclose(setting)==0){
+                            catalog_language_changed=1;
+                            snprintf(message,sizeof(message),"%s",
+                                 TR("Web API вимкнено — прямий TMDB",
+                                    "Web API disabled — direct TMDB"));
+                        }else snprintf(message,sizeof(message),"%s",
+                                        TR("Не вдалося зберегти налаштування",
+                                           "Could not save settings"));
+                    }else snprintf(message,sizeof(message),"%s",
+                                    TR("Не вдалося відкрити файл налаштувань",
+                                       "Could not open settings file"));
+                    continue;
+                }
+#endif
                 if(key==SDL_CONTROLLER_BUTTON_A){
                     if(settings_selected==SETTING_APPEARANCE){
                         appearance_selected=0;
@@ -3862,6 +3883,48 @@ int main(void) {
                             snprintf(message,sizeof(message),"%s",
                                      TR("Не вдалося зберегти мову на SD-карті",
                                         "Could not save the language to the SD card"));
+                    }else if(settings_selected==SETTING_WEB_API){
+#ifdef __PS5__
+                        char hostname[180]={0};
+                        keyboard_url_mode=1;
+                        int confirmed=keyboard(hostname,sizeof(hostname));
+                        keyboard_url_mode=0;
+                        if(confirmed){
+                            size_t length=strlen(hostname);
+                            int valid=length>3 && length<170 &&
+                                      strchr(hostname,'.')!=NULL &&
+                                      hostname[0]!='.' && hostname[length-1]!='.' &&
+                                      hostname[0]!='-' && hostname[length-1]!='-';
+                            for(size_t i=0;i<length;i++){
+                                unsigned char c=(unsigned char)hostname[i];
+                                if(!((c>='a' && c<='z') ||
+                                     (c>='A' && c<='Z') ||
+                                     (c>='0' && c<='9') || c=='.' || c=='-'))
+                                    valid=0;
+                            }
+                            if(strstr(hostname,".."))valid=0;
+                            if(!valid)
+                                snprintf(message,sizeof(message),"%s",
+                                    TR("Введіть домен без https://, пробілів або /",
+                                       "Enter a hostname without https://, spaces or /"));
+                            else{
+                                mkdir(UAPLAY_DATA_ROOT,0777);
+                                mkdir(UAPLAY_DATA_DIR,0777);
+                                FILE *setting=fopen(UAPLAY_DATA_DIR "/web-api-url.txt","wb");
+                                if(setting){
+                                    fprintf(setting,"https://%s\n",hostname);
+                                    if(fclose(setting)==0){
+                                        catalog_language_changed=1;
+                                        snprintf(message,sizeof(message),"%s",
+                                            TR("UAPlay-web API підключено",
+                                               "UAPlay-web API connected"));
+                                    }else snprintf(message,sizeof(message),"%s",
+                                           TR("Помилка збереження API","Could not save API"));
+                                }else snprintf(message,sizeof(message),"%s",
+                                       TR("Не вдалося відкрити файл API","Cannot open API file"));
+                            }
+                        }
+#endif
                     }
                 }
                 continue;
