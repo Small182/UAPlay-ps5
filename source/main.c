@@ -203,7 +203,7 @@ static int expanded_catalog=0;
 /* 0: posters, 1: Watch, 2: Favorite, 3: All,
    5: search, 6: settings, 7...11: main navigation,
    12...14: expanded sorting/back controls,
-   16...: subsection tabs, 18: clear watch history. */
+   16...18: subsection tabs, 19: clear watch history. */
 static int catalog_hero_focus=0;
 enum { CATALOG_BACK_FOCUS=14, IPTV_TAB_FOCUS=15 };
 static const struct {int focus,x,w;} main_tabs[]={
@@ -433,10 +433,13 @@ typedef struct {
     int ready,ready_generation,ready_count,ready_page,ready_has_more;
     int details_requested,details_ready;
     Movie details_request,details_result;
+    char details_genre[128];
     char category[48],query[192];
     Movie ready_items[CATALOG_PAGE_SIZE];
 } CatalogLoader;
 static CatalogLoader catalog_loader;
+static char ui_detail_genre[128];
+static int ui_detail_genre_id,ui_detail_genre_series;
 static int catalog_next_page=2,catalog_loading=0,catalog_has_more=0;
 static int compare_movie_sort(const void *a,const void *b){
     const Movie *left=a,*right=b;
@@ -472,10 +475,12 @@ static int catalog_worker(void *opaque){
             Movie target=loader->details_request;
             loader->details_requested=0;
             SDL_UnlockMutex(loader->mutex);
-            catalog_fetch_details(&target,NULL,0);
+            char genre[128]={0};
+            catalog_fetch_details(&target,genre,sizeof(genre));
             SDL_LockMutex(loader->mutex);
             if(!loader->quit){
                 loader->details_result=target;
+                snprintf(loader->details_genre,sizeof(loader->details_genre),"%s",genre);
                 loader->details_ready=1;
             }
             SDL_UnlockMutex(loader->mutex);
@@ -608,6 +613,10 @@ static void catalog_details_poll(Movie *movies,int count){
     SDL_LockMutex(loader->mutex);
     int ready=loader->details_ready;
     Movie result=loader->details_result;
+    if(ready){
+        snprintf(ui_detail_genre,sizeof(ui_detail_genre),"%s",loader->details_genre);
+        ui_detail_genre_id=result.id;ui_detail_genre_series=result.series;
+    }
     loader->details_ready=0;
     SDL_UnlockMutex(loader->mutex);
     if(!ready)return;
@@ -2170,7 +2179,9 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
         poster(p,&movies[chosen],DETAILS_POSTER_X,DETAILS_Y+DETAILS_PAD,
                DETAILS_POSTER_W,DETAILS_POSTER_H,&poster_budget);
         headline(p,movies[chosen].title,65,138,820);
-        text_muted(p,movies[chosen].original,67,198,815);
+        char rating_label[64];
+        snprintf(rating_label,sizeof(rating_label),"★ %.1f",movies[chosen].rating);
+        text_muted(p,rating_label,67,198,815);
         char tag[192];
         const Movie *selected=&movies[chosen];
         if(selected->series && selected->details_state>0 &&
@@ -2187,8 +2198,14 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
                           selected->runtime_minutes%60);
         }else snprintf(tag,sizeof(tag),"%s  ·  %s",selected->year,
                        selected->series?"Серіал":"Фільм");
-        text(p,tag,66,259,815);
-        summary(p,movies[chosen].overview,66,313,815);
+        if(!selected->series && ui_detail_genre_id==selected->id &&
+           ui_detail_genre_series==selected->series && ui_detail_genre[0]){
+            if(selected->runtime_minutes>0)
+                snprintf(tag,sizeof(tag),"%s  ·  %s  ·  %d хв",selected->year,ui_detail_genre,selected->runtime_minutes);
+            else snprintf(tag,sizeof(tag),"%s  ·  %s",selected->year,ui_detail_genre);
+        }
+        text(p,tag,66,241,815);
+        wrapped(p,movies[chosen].overview,66,294,815,6,28,p->font_small,.72f,.77f,.82f);
         if(!details_button_focus)selection_frame(p,65,526,238,58);
         else selection_frame(p,320,526,255,58);
         button(p,"▶  Дивитися",65,526,238,58,1);
@@ -2360,7 +2377,7 @@ static void ps5_player_right_stick(SDL_GameController *pad,mpv_handle *player){
 }
 #endif
 
-static void draw_player_controls(Paint *p,mpv_handle *player) {
+static void draw_player_controls(Paint *p,mpv_handle *player,const Movie *movie) {
     ui_theme_enabled=0; /* Video playback controls remain readable in both themes. */
     double pos=0,duration=0;
     int paused=0;
@@ -2378,7 +2395,9 @@ static void draw_player_controls(Paint *p,mpv_handle *player) {
                     p->font_small,.96f,.97f,.99f);
     }
     box_alpha(p,0,507,1280,213,.027f,.034f,.044f,.93f,0);
-    text_tiny(p,"UAPlay  ·  Відтворення",35,519,430);
+    char playback_title[256];
+    snprintf(playback_title,sizeof(playback_title),"Відтворення · %s",movie && movie->title[0]?movie->title:"UAPlay");
+    text_tiny(p,playback_title,35,519,740);
     if(active_episode_variant>=0 &&
        catalog_next_episode(episodes,episode_count,active_episode_variant)>=0)
         text_tiny(p,
@@ -2392,7 +2411,7 @@ static void draw_player_controls(Paint *p,mpv_handle *player) {
     int filled=duration>0?(int)(1028.0*pos/duration):0;
     if(filled<0)filled=0;if(filled>1028)filled=1028;
     if(filled>0)box_alpha(p,126,566,filled,6,.92f,.94f,.97f,1.f,3);
-    box_alpha(p,126+filled-8,559,16,20,.95f,.96f,.98f,1.f,8);
+    box_alpha(p,126+filled-9,560,18,18,.95f,.96f,.98f,1.f,9);
     char left[24],right[24];
     snprintf(left,sizeof(left),"%02d:%02d",(int)pos/60,(int)pos%60);
     snprintf(right,sizeof(right),"%02d:%02d",(int)duration/60,(int)duration%60);
@@ -2402,7 +2421,7 @@ static void draw_player_controls(Paint *p,mpv_handle *player) {
     int volume=(int)video_options[1];
     if(volume<0)volume=0;if(volume>130)volume=130;
     if(volume>0)box_alpha(p,70,649,volume*178/130,5,.92f,.94f,.97f,1.f,3);
-    box_alpha(p,70+volume*178/130-7,641,14,20,.96f,.97f,.98f,1.f,7);
+    box_alpha(p,70+volume*178/130-9,642,18,18,.96f,.97f,.98f,1.f,9);
     char volume_label[24];snprintf(volume_label,sizeof(volume_label),"%d%%",volume);
     text_tiny(p,volume_label,122,672,100);
     const int centers[]={500,640,780,918,1028,1138};
@@ -4446,12 +4465,12 @@ int main(void) {
                 box_alpha(&paint,0,0,1280,720,white,white,white,opacity,0);
             }
 #endif
-            if(video_loaded && SDL_GetTicks()<controls_until)draw_player_controls(&paint,player);
+            if(video_loaded && SDL_GetTicks()<controls_until)draw_player_controls(&paint,player,&playing_movie);
 #ifdef UAPLAY_PS5_SOFTWARE
             if(ps5_stick_hud_kind && SDL_GetTicks()-ps5_stick_hud_at<1500u){
                 char indicator[80];
                 if(ps5_stick_hud_kind==2)
-                    snprintf(indicator,sizeof(indicator),"Гучність %.0f%%",video_options[1]);
+                    snprintf(indicator,sizeof(indicator),"%.0f%%",video_options[1]);
                 else snprintf(indicator,sizeof(indicator),
                               "Яскравість відео %+.0f",video_options[2]);
                 box_alpha(&paint,897,282,351,65,.055f,.068f,.086f,.9f,16);
