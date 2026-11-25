@@ -34,6 +34,22 @@
 #ifndef UAPLAY_TMDB_BUILD_KEY
 #define UAPLAY_TMDB_BUILD_KEY ""
 #endif
+
+#ifdef __PS5__
+/* UAPlay-web Worker is an optional, server-side TMDB gateway for the native PS5
+ * app. A configured gateway supplies catalogue, search and details without
+ * exposing the TMDB secret to the console. All video stays on the native player.
+ * It is deliberately not a WebKit/browser dependency. */
+#if defined(__has_include)
+#  if __has_include("web_api_build_config.h")
+#    include "web_api_build_config.h"
+#  endif
+#endif
+#ifndef UAPLAY_WEB_API_URL
+#define UAPLAY_WEB_API_URL ""
+#endif
+#endif
+
 #define UAFRESH_WORKER "https://uakino.ofreshofresh.workers.dev"
 #define MOVY_API "https://api.wecollege.net"
 
@@ -870,10 +886,176 @@ static void catalog_primary_genre(const char *json,char *genre,size_t size){
     if(!strcmp(genre,"null"))genre[0]=0;
 }
 
+
+#ifdef __PS5__
+/* On-device override lets the same exFAT image point to a newly deployed
+ * Cloudflare Worker without rebuilding the title. Secrets are never stored here. */
+static int uaplay_web_api_origin(char *origin, size_t size) {
+    char value[256] = {0};
+    FILE *file=fopen(UAPLAY_DATA_DIR "/web-api-url.txt","r");
+    if(file){
+        if(!fgets(value,sizeof(value),file))value[0]=0;
+        fclose(file);
+    }
+    if(!value[0])snprintf(value,sizeof(value),"%s",UAPLAY_WEB_API_URL);
+    size_t length=strcspn(value,"\r\n \t");
+    value[length]=0;
+    if(strncmp(value,"https://",8)!=0)return 0;
+    const char *host=value+8;
+    if(!*host || *host=='/' || strlen(value)>=size)return 0;
+    /* Accept a hostname and optional numeric port, not a URL containing
+       user info, query strings or arbitrary request paths. */
+    for(const char *p=host;*p;p++){
+        if(*p=='/' && p[1]==0)break;
+        if(!((*p>='a' && *p<='z') || (*p>='A' && *p<='Z') ||
+             (*p>='0' && *p<='9') || *p=='.' || *p=='-' || *p==':'))
+            return 0;
+    }
+    size_t clean=strlen(value);
+    if(clean>8 && value[clean-1]=='/')value[clean-1]=0;
+    snprintf(origin,size,"%s",value);
+    return 1;
+}
+
+/* Cloudflare's /api/title route returns the same TMDB identifier and
+ * localized text with renamed metadata fields (seasons/episodes/runtime).
+ * Keep the shared native Movie structure so existing PS5 screens work. */
+static int uaplay_web_api_details(Movie *movie,char *genre,size_t genre_size){
+    char origin[256],url[512],error[160]={0};
+    if(!movie || movie->id<=0 || !uaplay_web_api_origin(origin,sizeof(origin)))
+        return 0;
+    snprintf(url,sizeof(url),"%s/api/title/%s/%d",origin,
+             movie->series?"tv":"movie",movie->id);
+    char *json=request(url,error,sizeof(error));
+    if(!json)return 0;
+    const char *end=json+strlen(json);
+    char value[64],title[sizeof(movie->title)],overview[sizeof(movie->overview)];
+    json_field(json,end,"title",title,sizeof(title));
+    json_field(json,end,"overview",overview,sizeof(overview));
+    if(title[0] && strcmp(title,"null"))
+        snprintf(movie->title,sizeof(movie->title),"%s",title);
+    if(overview[0] && strcmp(overview,"null"))
+        snprintf(movie->overview,sizeof(movie->overview),"%s",overview);
+    if(movie->series){
+        json_field(json,end,"seasons",value,sizeof(value));
+        movie->season_count=atoi(value);
+        json_field(json,end,"episodes",value,sizeof(value));
+        movie->episode_count=atoi(value);
+    }else{
+        json_field(json,end,"runtime",value,sizeof(value));
+        movie->runtime_minutes=atoi(value);
+    }
+    if(genre && genre_size){
+        genre[0]=0;
+        const char *array=json_array_start(json,end,"genres");
+        if(array){
+            array=json_ws(array);
+            if(*array=='"'){
+                const char *finish=strchr(array+1,'"');
+                if(finish){
+                    size_t n=(size_t)(finish-(array+1));
+                    if(n>=genre_size)n=genre_size-1;
+                    memcpy(genre,array+1,n);
+                    genre[n]=0;
+                }
+            }
+        }
+    }
+    movie->details_state=1;
+    free(json);
+    return 1;
+}
+
+/* Returns -1 to use the existing direct TMDB path and cached fallback.
+ * The Worker already excludes future releases and titles from Russia. */
+static int uaplay_web_api_catalog(const char *category,const char *query,
+                                  int page,int sort_mode,Movie *items,int max,
+                                  char *error,int error_size,int *has_more){
+    char origin[256],url[960];
+    if(!uaplay_web_api_origin(origin,sizeof(origin)))return -1;
+    if(query && *query && strlen(query)<2)return -1;
+    const char *section="trending";
+    if(!strcmp(category,"films"))section="movies";
+    else if(!strcmp(category,"series"))section="series";
+    else if(!strcmp(category,"cartoons"))section="animation";
+    else if(!strcmp(category,"cartoon_series"))section="cartoons";
+    else if(!strcmp(category,"anime"))section="anime";
+    else if(!strcmp(category,"top"))section="top";
+    else if(!strncmp(category,"genre_",6))section=category;
+    if(query && *query){
+        char *encoded=encode(query);
+        if(!encoded)return -1;
+        snprintf(url,sizeof(url),"%s/api/search?q=%s&page=%d",origin,encoded,page);
+        free(encoded);
+    }else{
+        const char *sort=sort_mode==1?"rating":sort_mode==2?"newest":"popularity";
+        snprintf(url,sizeof(url),"%s/api/catalog?section=%s&page=%d&sort=%s",
+                 origin,section,page,sort);
+    }
+    char *json=request(url,error,error_size);
+    if(!json)return -1;
+    const char *end_json=json+strlen(json);
+    const char *results=json_array_start(json,end_json,"results");
+    if(!results){
+        free(json);
+        return -1;
+    }
+    char page_count[24];
+    json_field(json,end_json,"totalPages",page_count,sizeof(page_count));
+    if(has_more)*has_more=page<atoi(page_count) && page<500;
+    int count=0;
+    const char *p=results;
+    while(p<end_json && count<max && count<CATALOG_MAX){
+        p=json_ws(p);
+        if(*p==']')break;
+        if(*p==','){p++;continue;}
+        if(*p!='{')break;
+        const char *end=object_end(p);
+        if(!end || end>end_json)break;
+        Movie m={0};
+        char id[32],type[16],date[32],rating[32],value[32];
+        json_field(p,end,"id",id,sizeof(id));
+        json_field(p,end,"type",type,sizeof(type));
+        m.series=!strcmp(type,"tv");
+        json_field(p,end,"title",m.title,sizeof(m.title));
+        json_field(p,end,"originalTitle",m.original,sizeof(m.original));
+        json_field(p,end,"overview",m.overview,sizeof(m.overview));
+        json_field(p,end,"poster",m.poster,sizeof(m.poster));
+        json_field(p,end,"date",date,sizeof(date));
+        json_field(p,end,"rating",rating,sizeof(rating));
+        m.id=atoi(id);
+        m.rating=(float)atof(rating);
+        if(strlen(date)>=4)memcpy(m.year,date,4);
+        json_field(p,end,"runtime",value,sizeof(value));
+        m.runtime_minutes=atoi(value);
+        json_field(p,end,"seasons",value,sizeof(value));
+        m.season_count=atoi(value);
+        json_field(p,end,"episodes",value,sizeof(value));
+        m.episode_count=atoi(value);
+        if(m.id>0 && m.title[0] && strcmp(m.poster,"null")){
+            items[count++]=m;
+        }else if(m.id>0 && m.title[0]){
+            m.poster[0]=0;
+            items[count++]=m;
+        }
+        p=end;
+    }
+    free(json);
+    if(count)error[0]=0;
+    else snprintf(error,error_size,"%s",
+                  TR("Не знайдено матеріалів","No titles found"));
+    return count;
+}
+#endif /* __PS5__ */
+
 static int catalog_fetch_details_language(Movie *movie,UiLanguage language,
                                           char *genre,size_t genre_size){
     if(genre && genre_size)genre[0]=0;
     if(!movie || movie->id<=0)return 0;
+#ifdef __PS5__
+    if(language==UI_UKRAINIAN && uaplay_web_api_details(movie,genre,genre_size))
+        return 1;
+#endif
     char key[256];tmdb_key(key,sizeof(key));
     if(!key[0]){movie->details_state=-1;return 0;}
     char url[600],error[160]={0};
@@ -911,6 +1093,11 @@ int catalog_load_page_sorted(const char *category, const char *query, int page,
                              char *error, int error_size, int *has_more) {
     if(has_more)*has_more=0;
     if (page<1 || page>500) return 0;
+#ifdef __PS5__
+    int web_count=uaplay_web_api_catalog(category,query,page,sort_mode,
+                                          items,max,error,error_size,has_more);
+    if(web_count>=0)return web_count;
+#endif
     char key[256];
     tmdb_key(key,sizeof(key));
     if (!key[0]) {
