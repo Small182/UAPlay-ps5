@@ -3584,23 +3584,43 @@ int main(void) {
                     ps5_tv_genre_selection=ps5_tv_genre+1;
                     page=IPTV_GENRES;continue;
                 }
+                if(key==SDL_CONTROLLER_BUTTON_RIGHTSTICK ||
+                   (key==SDL_CONTROLLER_BUTTON_A && ps5_tv_filter_focus==4)){
+                    char search[sizeof(ps5_tv_query)]={0};
+                    if(keyboard(search,sizeof(search)))
+                        snprintf(ps5_tv_query,sizeof(ps5_tv_query),"%s",search);
+                    ps5_tv_selection=0;
+                    ps5_tv_filter_focus=4;
+                    continue;
+                }
+                if(key==SDL_CONTROLLER_BUTTON_LEFTSTICK){
+                    ps5_tv_query[0]=0;
+                    ps5_tv_reset_selection();
+                    continue;
+                }
                 if(key==SDL_CONTROLLER_BUTTON_DPAD_UP){
-                    if(!ps5_tv_filter_focus){
-                        if(ps5_tv_selection>=6)ps5_tv_selection-=6;
-                        else ps5_tv_filter_focus=1;
-                    }else ps5_tv_filter_focus=0;
+                    if(ps5_tv_filter_focus==4)ps5_tv_filter_focus=1;
+                    else if(!ps5_tv_filter_focus){
+                        if(ps5_tv_selection>=4)ps5_tv_selection-=4;
+                        else ps5_tv_filter_focus=4;
+                    }
                 }
                 if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN){
-                    if(ps5_tv_filter_focus)ps5_tv_filter_focus=0;
-                    else if(ps5_tv_selection+6<count)ps5_tv_selection+=6;
+                    if(ps5_tv_filter_focus>=1 && ps5_tv_filter_focus<=3)
+                        ps5_tv_filter_focus=4;
+                    else if(ps5_tv_filter_focus==4)ps5_tv_filter_focus=0;
+                    else if(ps5_tv_selection+4<count)ps5_tv_selection+=4;
                 }
                 if(key==SDL_CONTROLLER_BUTTON_DPAD_LEFT){
                     if(ps5_tv_filter_focus>1)ps5_tv_filter_focus--;
-                    else if(!ps5_tv_filter_focus && ps5_tv_selection>0)ps5_tv_selection--;
+                    else if(!ps5_tv_filter_focus && ps5_tv_selection>0)
+                        ps5_tv_selection--;
                 }
                 if(key==SDL_CONTROLLER_BUTTON_DPAD_RIGHT){
-                    if(ps5_tv_filter_focus && ps5_tv_filter_focus<3)ps5_tv_filter_focus++;
-                    else if(!ps5_tv_filter_focus && ps5_tv_selection+1<count)ps5_tv_selection++;
+                    if(ps5_tv_filter_focus && ps5_tv_filter_focus<4)
+                        ps5_tv_filter_focus++;
+                    else if(!ps5_tv_filter_focus && ps5_tv_selection+1<count)
+                        ps5_tv_selection++;
                 }
                 if(key==SDL_CONTROLLER_BUTTON_LEFTSHOULDER && count>0){
                     ps5_tv_selection=(ps5_tv_selection/12>0?ps5_tv_selection/12-1:0)*12;
@@ -3624,7 +3644,8 @@ int main(void) {
                                 TR("Не вдалося зберегти IPTV","Could not save IPTV favorites"));
                     }
                 }
-                if(key==SDL_CONTROLLER_BUTTON_A && ps5_tv_filter_focus){
+                if(key==SDL_CONTROLLER_BUTTON_A && ps5_tv_filter_focus>=1 &&
+                   ps5_tv_filter_focus<=3){
                     switch(ps5_tv_filter_focus){
                         case 1:page=IPTV_COUNTRIES;break;
                         case 2:ps5_tv_genre_selection=ps5_tv_genre+1;page=IPTV_GENRES;break;
