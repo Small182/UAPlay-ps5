@@ -60,5 +60,6 @@ struct MediaTrack;
 int ps5_kitchen_tracks(mpv_handle *p,int subtitles,struct MediaTrack *out,int max);
 int ps5_kitchen_select_track(mpv_handle *p,int subtitles,int id);
 int ps5_kitchen_set_volume(mpv_handle *p,double volume);
+const char *ps5_kitchen_last_error(mpv_handle *p);
 
 #endif
