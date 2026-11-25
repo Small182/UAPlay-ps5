@@ -2223,8 +2223,25 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
             if(i>0 && episodes[i-1].season==episodes[i].season &&
                episodes[i-1].number==episodes[i].number)continue;
             if(idx>=first && idx<first+UI_ROWS) {
+                double seconds=0;
+                int watched=library_episode_status(&movies[chosen],
+                                    episodes[i].season,episodes[i].number,&seconds);
+                char detail[90]={0};
+                if(watched==2)
+                    snprintf(detail,sizeof(detail),"%s",
+                             TR("✓ Переглянуто","✓ Watched"));
+                else if(watched==1 && seconds>=1){
+                    int elapsed=(int)seconds;
+                    snprintf(detail,sizeof(detail),TR("Продовжити %02d:%02d",
+                                                  "Resume %02d:%02d"),
+                             elapsed/60,elapsed%60);
+                }else if(watched==1)
+                    snprintf(detail,sizeof(detail),"%s",
+                             TR("Розпочато","Started"));
+                else snprintf(detail,sizeof(detail),"%s",
+                              TR("Не переглянуто","Not watched"));
                 list_row(p,episodes[i].title,UI_ROW_Y+(idx-first)*UI_ROW_STEP,
-                         idx==selected_episode,NULL);
+                         idx==selected_episode,detail);
             }
             idx++;
         }
@@ -3688,10 +3705,14 @@ int main(void) {
                             playing_movie=movies[chosen];
                             int saved_season=0,saved_episode=0;
                             double saved_seconds=0;
-                            resume_at=(library_last_episode(&playing_movie,
-                                       &saved_season,&saved_episode,&saved_seconds) &&
-                                       saved_season==episode->season &&
-                                       saved_episode==episode->number)?saved_seconds:0;
+                            int completed=library_episode_status(&playing_movie,
+                                            episode->season,episode->number,&resume_at);
+                            if(completed==2)resume_at=0;
+                            else if(completed==0)
+                                resume_at=(library_last_episode(&playing_movie,
+                                           &saved_season,&saved_episode,&saved_seconds) &&
+                                           saved_season==episode->season &&
+                                           saved_episode==episode->number)?saved_seconds:0;
                             library_mark_watched(&playing_movie);
                             library_set_episode_progress(&playing_movie,
                                 episode->season,episode->number,resume_at);
@@ -4190,9 +4211,9 @@ int main(void) {
                         page=player_return_page;
                     }else if(end && end->reason==MPV_END_FILE_REASON_EOF){
                         if(player_return_page==EPISODES && active_episode_variant>=0)
-                            library_set_episode_progress(&playing_movie,
+                            library_mark_episode_completed(&playing_movie,
                                 episodes[active_episode_variant].season,
-                                episodes[active_episode_variant].number,0);
+                                episodes[active_episode_variant].number);
                         int following=player_return_page==EPISODES &&
                                       active_episode_variant>=0 ?
                             catalog_next_episode(episodes,episode_count,
