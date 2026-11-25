@@ -85,22 +85,63 @@ static IptvCatalog ps5_tv_channels={0},ps5_tv_favorites={0};
 static int ps5_tv_country=0,ps5_tv_selection=0,ps5_tv_country_count=0;
 static int ps5_tv_genre=IPTV_ALL,ps5_tv_genre_selection=0,ps5_tv_show_favorites=0;
 static int ps5_tv_filter_focus=0; /* 0 grid, 1 country, 2 genre, 3 favorite */
+
+/* The web IPTV search covers channel names and playlist genres. UTF-8
+   Cyrillic case folding keeps the PS5 Ukrainian keyboard practical. */
+static char ps5_tv_query[96]={0};
+static unsigned ps5_tv_fold_next(const unsigned char **ptr){
+    const unsigned char *p=*ptr;
+    unsigned c=*p++;
+    if(c>=0xc2 && c<0xe0 && (p[0]&0xc0)==0x80){
+        c=((c&0x1f)<<6)|(p[0]&0x3f);p++;
+    }else if(c>=0xe0 && c<0xf0 && (p[0]&0xc0)==0x80 &&
+             (p[1]&0xc0)==0x80){
+        c=((c&0x0f)<<12)|((p[0]&0x3f)<<6)|(p[1]&0x3f);p+=2;
+    }
+    *ptr=p;
+    if(c>='A' && c<='Z')return c+32;
+    if(c>=0x0410 && c<=0x042f)return c+32; /* А-Я */
+    if(c==0x0401)return 0x0451;
+    if(c==0x0404)return 0x0454;
+    if(c==0x0406)return 0x0456;
+    if(c==0x0407)return 0x0457;
+    if(c==0x0490)return 0x0491;
+    return c;
+}
+static int ps5_tv_contains(const char *haystack,const char *needle){
+    if(!needle || !*needle)return 1;
+    const unsigned char *start=(const unsigned char *)(haystack?haystack:"");
+    for(const unsigned char *h=start;*h;){
+        const unsigned char *a=h,*b=(const unsigned char *)needle;
+        while(*a && *b && ps5_tv_fold_next(&a)==ps5_tv_fold_next(&b)){}
+        if(!*b)return 1;
+        (void)ps5_tv_fold_next(&h);
+    }
+    return 0;
+}
+static int ps5_tv_matches(const IptvChannel *channel){
+    if(!channel)return 0;
+    if(ps5_tv_genre!=IPTV_ALL &&
+       !(channel->genres&(UINT32_C(1)<<ps5_tv_genre)))return 0;
+    return !ps5_tv_query[0] ||
+           ps5_tv_contains(channel->title,ps5_tv_query) ||
+           ps5_tv_contains(channel->groups,ps5_tv_query);
+}
+
 static int ps5_tv_visible_count(void){
     const IptvCatalog *active=ps5_tv_show_favorites?&ps5_tv_favorites:&ps5_tv_channels;
-    if(ps5_tv_show_favorites || ps5_tv_genre==IPTV_ALL)return active->count;
     int count=0;
     for(int i=0;i<active->count;i++)
-        if(active->channels[i].genres&(UINT32_C(1)<<ps5_tv_genre))count++;
+        if(ps5_tv_matches(&active->channels[i]))count++;
     return count;
 }
 static const IptvChannel *ps5_tv_channel(int row){
     const IptvCatalog *active=ps5_tv_show_favorites?&ps5_tv_favorites:&ps5_tv_channels;
-    if(row<0 || row>=active->count)return NULL;
-    if(ps5_tv_show_favorites || ps5_tv_genre==IPTV_ALL)return &active->channels[row];
-    for(int i=0;i<active->count;i++)
-        if(active->channels[i].genres&(UINT32_C(1)<<ps5_tv_genre)){
-            if(!row--)return &active->channels[i];
-        }
+    if(row<0)return NULL;
+    for(int i=0;i<active->count;i++){
+        if(!ps5_tv_matches(&active->channels[i]))continue;
+        if(row--==0)return &active->channels[i];
+    }
     return NULL;
 }
 static void ps5_tv_reset_selection(void){ps5_tv_selection=0;ps5_tv_filter_focus=0;}
