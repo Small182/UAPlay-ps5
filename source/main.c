@@ -113,8 +113,13 @@ static int ps5_tv_contains(const char *haystack,const char *needle){
     const unsigned char *start=(const unsigned char *)(haystack?haystack:"");
     for(const unsigned char *h=start;*h;){
         const unsigned char *a=h,*b=(const unsigned char *)needle;
-        while(*a && *b && ps5_tv_fold_next(&a)==ps5_tv_fold_next(&b)){}
-        if(!*b)return 1;
+        int equal=1;
+        while(*b){
+            if(!*a || ps5_tv_fold_next(&a)!=ps5_tv_fold_next(&b)){
+                equal=0;break;
+            }
+        }
+        if(equal)return 1;
         (void)ps5_tv_fold_next(&h);
     }
     return 0;
