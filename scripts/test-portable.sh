@@ -22,5 +22,9 @@ cc -O2 -Wall -Wextra -Isource source/library.c tests/episode_history_smoke.c \
    -o "${out}/episode_history_smoke"
 (cd "${out}" && ./episode_history_smoke)
 
+cc -O2 -Wall -Wextra -Isource tests/web_ui_search_smoke.c \
+  -o "${out}/web_ui_search_smoke"
+"${out}/web_ui_search_smoke"
+
 echo 'Portable UAPlay checks passed.'
 
