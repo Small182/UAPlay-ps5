@@ -4533,8 +4533,15 @@ int main(void) {
                               13,13,bright,bright,bright,1.f,6);
                 }
                 text_color(&paint,"Завантаження відео",507,426,310,.76f,.78f,.82f);
+#ifdef __PS5__
+                text_color(&paint,ps5_kitchen_diagnostic(player),72,478,1136,.76f,.78f,.82f);
+#endif
                 if(video_started_at && SDL_GetTicks()-video_started_at>30000){
+#ifdef __PS5__
+                    snprintf(message,sizeof(message),"Timeout: %s",ps5_kitchen_diagnostic(player));
+#else
                     snprintf(message,sizeof(message),"Час очікування відео вичерпано (30 с)");
+#endif
                     command(player,"stop",NULL);page=player_return_page;
                 }
             }
