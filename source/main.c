@@ -53,14 +53,14 @@ static const struct {
     int id;
     UiText name;
 } providers[]={
-    {1,{"UAFlix","UAFlix"}},{2,{"UASerials","UASerials"}},{3,{"Eneyida","Eneyida"}},
-    {4,{"UAFilm","UAFilm"}},{5,{"UAKino","UAKino"}},{6,{"Mikai (аніме)","Mikai (anime)"}},
+    {2,{"UASerials","UASerials"}},{3,{"Eneyida","Eneyida"}},
+    {4,{"UAFilm","UAFilm"}},{6,{"Mikai (аніме)","Mikai (anime)"}},
     {7,{"AnimeON (аніме)","AnimeON (anime)"}}
 };
 enum { PROVIDER_COUNT=sizeof(providers)/sizeof(providers[0]),
        MOVY_PROVIDER_BIT=1u<<(UAKINO_PROVIDER_MOVY-1),
        LEGACY_PROVIDER_MASK=(1u<<UAKINO_PROVIDER_MOVY)-1u,
-       ALL_PROVIDERS=0x7fu };
+       ALL_PROVIDERS=0x6eu };
 /* Bit positions follow the persisted provider IDs, including the slot
    retired between AnimeON and Movy. */
 static unsigned enabled_providers=ALL_PROVIDERS;
@@ -248,11 +248,12 @@ static int sort_button_for_mode(int mode){
 static int details_button_focus=0;
 /* Settings and appearance palette from UAPlay-nx/main v0.5.10. */
 enum { SETTING_APPEARANCE, SETTING_PLAYER,
-       SETTING_PROVIDERS, SETTING_LANGUAGE, SETTING_COUNT };
+       SETTING_PROVIDERS, SETTING_LANGUAGE, SETTING_WEB_API, SETTING_COUNT };
 enum { APPEARANCE_THEME, APPEARANCE_ACCENT, APPEARANCE_WALLPAPERS,
        APPEARANCE_DEFAULT, APPEARANCE_COUNT };
 enum { SETTINGS_Y=138, SETTINGS_ROW_STEP=81, SETTINGS_ROW_HEIGHT=64 };
 static int settings_selected=0,appearance_selected=0,source_mode=0;
+static int keyboard_url_mode=0; /* only the Worker hostname editor uses symbols */
 typedef struct {const char *uk,*en;unsigned rgb;} AccentPreset;
 /* Inspired by the Pantone swatch names in the reference screenshot. RGB
    values are screen approximations, not official Pantone color conversions. */
@@ -2039,7 +2040,8 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
                       TR("Налаштування","Settings"),"UAPlay");
         const char *main_items[]={
             TR("Зовнішній вигляд","Appearance"),TR("Плеєр","Player"),
-            TR("Джерела","Providers"),TR("Мова / Language","Language / Мова")
+            TR("Джерела","Providers"),TR("Мова / Language","Language / Мова"),
+            TR("UAPlay-web API","UAPlay-web API")
         };
         const char *appearance_items[]={
             TR("Тема","Theme"),TR("Колір акценту","Accent color"),
@@ -2133,6 +2135,20 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
                     help=TR("Змінює мову інтерфейсу, назв і описів TMDb.",
                             "Change the interface language and TMDb titles and descriptions.");
                     action=TR("English","Українська");
+                    break;
+                case SETTING_WEB_API:
+#ifdef __PS5__
+                    {
+                        char origin[256]={0};
+                        if(catalog_web_api_origin(origin,sizeof(origin)))
+                            snprintf(description,sizeof(description),"%.230s",origin);
+                        else snprintf(description,sizeof(description),"%s",
+                                      TR("Прямий TMDB (резерв)","Direct TMDB (fallback)"));
+                    }
+#endif
+                    help=TR("Введіть домен розгорнутого UAPlay-web Worker. Каталог, пошук, джерела та серії працюватимуть через спільний API. □ — вимкнути.",
+                            "Enter your deployed UAPlay-web Worker hostname. Catalogue, search, providers and episodes use its API. Square disables.");
+                    action=TR("Вказати домен","Set domain");
                     break;
             }
         }
@@ -2492,11 +2508,16 @@ static int keyboard(char *value,size_t size) {
         {"a","s","d","f","g","h","j","k","l",NULL,NULL,NULL},
         {"z","x","c","v","b","n","m",NULL,NULL,NULL,NULL,NULL}
     };
+    static const char *url_symbols[][12]={
+        {"1","2","3","4","5","6","7","8","9","0",".","-"},
+        {"/",":","_","?","&","=","%","+","#","@","~",NULL},
+        {"!","$","(",")","[","]",",",";","*","^",NULL,NULL}
+    };
     static const int counts[2][3]={{10,9,7},{12,11,10}};
     static const char *actions[]={"ПРОБІЛ","СТЕРТИ","EN / УК","ЗНАЙТИ","СКАСУВАТИ"};
     if(!keyboard_paint || !keyboard_window || !value || size<2)return 0;
     value[0]=0;
-    int uk_mode=1,row=0,col=0,active=1,confirmed=0;
+    int uk_mode=keyboard_url_mode?0:1,row=0,col=0,active=1,confirmed=0;
     while(active){
         SDL_Event event;
         while(SDL_PollEvent(&event)){
@@ -2560,7 +2581,8 @@ static int keyboard(char *value,size_t size) {
             }
             if(key!=SDL_CONTROLLER_BUTTON_A)continue;
             if(row<3){
-                const char *letter=uk_mode?uk[row][col]:en[row][col];
+                const char *letter=keyboard_url_mode && uk_mode?
+                          url_symbols[row][col]:(uk_mode?uk[row][col]:en[row][col]);
                 if(letter){
                     size_t n=strlen(value),append=strlen(letter);
                     if(n+append<size)memcpy(value+n,letter,append+1);
@@ -2591,15 +2613,19 @@ static int keyboard(char *value,size_t size) {
         if(!active)break;
         Paint *p=keyboard_paint;
         box_alpha(p,0,0,1280,720,.035f,.045f,.061f,1.f,0);
-        headline(p,"Пошук — введіть назву",55,48,1100);
+        headline(p,keyboard_url_mode?TR("UAPlay-web — домен Worker",
+                                             "UAPlay-web — Worker hostname"):
+                   TR("Пошук — введіть назву","Search — enter a title"),55,48,1100);
         box_alpha(p,70,108,1140,72,.11f,.16f,.20f,1.f,16);
-        text(p,value[0]?value:"Введіть назву фільму або серіалу…",91,130,1098);
+        text(p,value[0]?value:(keyboard_url_mode?
+                 "example.workers.dev":"Введіть назву фільму або серіалу…"),91,130,1098);
         for(int r=0;r<3;r++){
             int count=counts[uk_mode][r];
             int key_width=78,step=86;
             int first_x=640-(count*step-8)/2;
             for(int c=0;c<count;c++){
-                const char *label=uk_mode?uk[r][c]:en[r][c];
+                const char *label=keyboard_url_mode && uk_mode?
+                          url_symbols[r][c]:(uk_mode?uk[r][c]:en[r][c]);
                 if(!label)continue;
                 int x=first_x+c*step,y=208+r*91;
                 box_alpha(p,x,y,key_width,68,r==row && c==col?.21f:.105f,
@@ -2614,10 +2640,14 @@ static int keyboard(char *value,size_t size) {
             box_alpha(p,x,y,204,64,row==3 && col==c?.21f:.10f,
                       row==3 && col==c?.34f:.15f,row==3 && col==c?.41f:.20f,1.f,14);
             if(row==3 && col==c)selection_frame(p,x,y,204,64);
-            text_center_button(p,actions[c],x,y,204,64,p->font_small,
+            text_center_button(p,keyboard_url_mode && c==2?"123 / ABC":
+                               keyboard_url_mode && c==3?TR("ГОТОВО","DONE"):
+                               actions[c],x,y,204,64,p->font_small,
                                .98f,.98f,.99f);
         }
-        text_muted(p,uk_mode?"Розкладка: УК (ЙЦУКЕН)":"Розкладка: EN (QWERTY)",
+        text_muted(p,keyboard_url_mode?
+                   (uk_mode?"Цифри та символи":"Домен: латинські літери") :
+                   (uk_mode?"Розкладка: УК (ЙЦУКЕН)":"Розкладка: EN (QWERTY)"),
                    100,598,700);
         text_muted(p,"X — вибрати   [] — стерти   ^ — мова   O — назад",100,635,1060);
         present_ui(keyboard_window);
