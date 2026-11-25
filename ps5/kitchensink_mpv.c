@@ -6,6 +6,8 @@
  */
 #include "../ps5/kitchensink_mpv.h"
 #include "playback.h"
+#include "platform_paths.h"
+#include <sys/stat.h>
 
 #include <SDL.h>
 #include <kitchensink2/kitchensink.h>
@@ -26,6 +28,9 @@ struct mpv_handle {
     Kit_Player *decoder;
     SDL_AudioDeviceID audio;
     int ready, event_stage, eof_sent, user_stopped;
+    int first_frame;
+    unsigned stream_generation;
+    Uint32 open_tick, last_diagnostic;
     double volume;
     int error;
     char error_text[256];
@@ -40,7 +45,15 @@ struct mpv_render_context {
     GLuint program, vao, vbo, texture;
 #endif
     int width, height;
+    unsigned stream_generation;
 };
+
+static void video_diagnostic(mpv_handle *p,const char *stage,int detail){
+    mkdir(UAPLAY_DATA_ROOT,0777);
+    FILE *f=fopen(UAPLAY_DATA_ROOT "/video.log","a");
+    if(f){fprintf(f,"[%u] %s (%d)\n",(unsigned)SDL_GetTicks(),stage,detail);fclose(f);}
+    (void)p;
+}
 
 static void audio_tick(mpv_handle *p) {
     if (!p || !p->decoder || !p->audio ||
@@ -79,7 +92,7 @@ static void clear_stream(mpv_handle *p) {
         Kit_CloseSource(p->source);
         p->source=NULL;
     }
-    p->ready=0;
+    p->first_frame=0;
 }
 
 mpv_handle *mpv_create(void) {
@@ -105,10 +118,14 @@ static int open_stream(mpv_handle *p,const char *url) {
     if(!p || !p->ready || !url || !*url)return -1;
     clear_stream(p);
     p->event_stage=0;p->eof_sent=0;p->error=0;p->user_stopped=0;
+    p->error_text[0]=0;p->stream_generation++;
+    p->open_tick=SDL_GetTicks();p->last_diagnostic=p->open_tick;
+    video_diagnostic(p,"Opening media source",0);
     /* Kit_CreateSourceFromUrl may wait for the remote server. Networking, TLS,
        codecs and stream headers still require real-hardware validation. */
     p->source=Kit_CreateSourceFromUrl(url);
     if(!p->source)goto error;
+    video_diagnostic(p,"Media source opened",0);
     Kit_VideoFormatRequest video;
     Kit_ResetVideoFormatRequest(&video);
     video.format=SDL_PIXELFORMAT_RGBA32;
@@ -123,10 +140,13 @@ static int open_stream(mpv_handle *p,const char *url) {
     audio.channels=2;
     int v=Kit_GetBestSourceStream(p->source,KIT_STREAMTYPE_VIDEO);
     int a=Kit_GetBestSourceStream(p->source,KIT_STREAMTYPE_AUDIO);
+    video_diagnostic(p,"Video stream",v);
+    video_diagnostic(p,"Audio stream",a);
     if(v<0 && a<0)goto error;
     int s=v<0?-1:Kit_GetBestSourceStream(p->source,KIT_STREAMTYPE_SUBTITLE);
     p->decoder=Kit_CreatePlayer(p->source,v,a,s,&video,&audio,1280,720);
     if(!p->decoder)goto error;
+    video_diagnostic(p,"Decoder created",0);
     if (a>=0) {
         Kit_PlayerInfo info={0};
         Kit_GetPlayerInfo(p->decoder,&info);
@@ -142,6 +162,7 @@ static int open_stream(mpv_handle *p,const char *url) {
         else SDL_PauseAudioDevice(p->audio,0);
     }
     Kit_PlayerPlay(p->decoder);
+    video_diagnostic(p,"Playback started",Kit_GetPlayerState(p->decoder));
     p->ready=1;
     p->event_stage=1;
     return 0;
@@ -149,6 +170,7 @@ error:
     snprintf(p->error_text,sizeof(p->error_text),"%s",Kit_GetError());
     fprintf(stderr,"UAPlay PS5 video open: %s\n",p->error_text);
     clear_stream(p);
+    video_diagnostic(p,"Open failed",-1);
     p->error=-1;p->event_stage=3;
     return -1;
 }
@@ -205,7 +227,7 @@ int mpv_command_async(mpv_handle *p,unsigned long long userdata,const char **arg
             Kit_GetPlayerState(p->decoder)==KIT_PAUSED?"no":"yes");
     }
     if(!strcmp(args[0],"stop")) {
-        p->user_stopped=1;clear_stream(p);p->event_stage=0;return 0;
+        p->user_stopped=1;p->stream_generation++;clear_stream(p);p->event_stage=0;return 0;
     }
     if(!strcmp(args[0],"seek") && p->decoder && args[1]) {
         double time=atof(args[1]);
@@ -232,10 +254,16 @@ mpv_event *mpv_wait_event(mpv_handle *p,double timeout) {
     else if(p->event_stage==2 && p->decoder){
         unsigned int frames=0;
         Kit_GetPlayerVideoBufferState(p->decoder,&frames,NULL,NULL,NULL);
-        if(frames>0 || Kit_GetPlayerVideoStream(p->decoder)<0){
+        if(p->first_frame || Kit_GetPlayerVideoStream(p->decoder)<0){
             p->event_stage=0;result.event_id=MPV_EVENT_FILE_LOADED;
+            video_diagnostic(p,"First decoded frame ready",(int)frames);
         }else if(Kit_GetPlayerState(p->decoder)==KIT_STOPPED){
-            p->event_stage=3;
+            p->error=-2;p->event_stage=3;
+            video_diagnostic(p,"Decoder stopped before first frame",(int)frames);
+        }else if(SDL_GetTicks()-p->last_diagnostic>=5000u){
+            p->last_diagnostic=SDL_GetTicks();
+            video_diagnostic(p,"Waiting for decoded frame",(int)frames);
+            video_diagnostic(p,"Decoder state",Kit_GetPlayerState(p->decoder));
         }
     }
     else if(p->event_stage==3){
@@ -249,6 +277,7 @@ mpv_event *mpv_wait_event(mpv_handle *p,double timeout) {
     return &result;
 }
 const char *mpv_error_string(int code) {
+    if(code==-2)return "Декодер зупинився до першого кадру";
     return code<0?"Помилка SDL_kitchensink / FFmpeg":"OK";
 }
 void mpv_terminate_destroy(mpv_handle *p) {
@@ -274,6 +303,11 @@ int mpv_render_context_render(mpv_render_context *ctx,const mpv_render_param *ar
     SDL_SetRenderDrawColor(ui_renderer,0,0,0,255);
     SDL_RenderClear(ui_renderer);
     mpv_handle *p=ctx->owner;
+    if(ctx->stream_generation!=p->stream_generation){
+        ctx->stream_generation=p->stream_generation;
+        if(ctx->texture)SDL_DestroyTexture(ctx->texture);
+        ctx->texture=NULL;ctx->width=ctx->height=0;
+    }
     if(!p->decoder)return 0;
     unsigned char **planes=NULL;
     int *strides=NULL;
@@ -289,6 +323,7 @@ int mpv_render_context_render(mpv_render_context *ctx,const mpv_render_param *ar
                 ctx->height=area.h;
             }
             result=ctx->texture?SDL_UpdateTexture(ctx->texture,NULL,planes[0],strides[0]):-1;
+            if(result==0)p->first_frame=1;
         }
         Kit_UnlockPlayerVideoRawFrame(p->decoder);
     }
@@ -360,6 +395,7 @@ int mpv_render_context_render(mpv_render_context *ctx,const mpv_render_param *ar
     glViewport(0,0,1280,720);
     glClearColor(0.f,0.f,0.f,1.f);
     glClear(GL_COLOR_BUFFER_BIT);
+    if(ctx->stream_generation!=p->stream_generation){ctx->stream_generation=p->stream_generation;ctx->width=ctx->height=0;}
     if(!p->decoder)return 0;
     unsigned char **planes=NULL;int *strides=NULL;
     SDL_Rect area={0};
@@ -377,6 +413,7 @@ int mpv_render_context_render(mpv_render_context *ctx,const mpv_render_param *ar
             glTexSubImage2D(GL_TEXTURE_2D,0,0,0,ctx->width,ctx->height,
                             GL_RGBA,GL_UNSIGNED_BYTE,planes[0]);
             glPixelStorei(GL_UNPACK_ROW_LENGTH,0);
+            p->first_frame=1;
         }
         Kit_UnlockPlayerVideoRawFrame(p->decoder);
     }
