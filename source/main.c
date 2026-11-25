@@ -2451,7 +2451,8 @@ static void ps5_player_right_stick(SDL_GameController *pad,mpv_handle *player){
 }
 #endif
 
-static void draw_player_controls(Paint *p,mpv_handle *player) {
+static void draw_player_controls(Paint *p,mpv_handle *player,
+                                 const Movie *playing_movie,Page player_return_page) {
     ui_theme_enabled=0; /* Video playback controls remain readable in both themes. */
     double pos=0,duration=0;
     int paused=0;
@@ -2470,7 +2471,8 @@ static void draw_player_controls(Paint *p,mpv_handle *player) {
     }
     box_alpha(p,0,507,1280,213,.027f,.034f,.044f,.93f,0);
     char playing_label[290];
-    const char *playing_title=playing_movie.id>0?playing_movie.title:NULL;
+    const char *playing_title=playing_movie && playing_movie->id>0?
+                              playing_movie->title:NULL;
     if(!playing_title || !*playing_title){
         const IptvChannel *live=player_return_page==IPTV_CHANNELS?
                                 ps5_tv_channel(ps5_tv_selection):NULL;
@@ -4710,7 +4712,7 @@ int main(void) {
 #endif
             if(player_overlay)draw_player_sheet(&paint,page==TRACK_PICKER);
             else if(video_loaded && SDL_GetTicks()<controls_until)
-                draw_player_controls(&paint,player);
+                draw_player_controls(&paint,player,&playing_movie,player_return_page);
 #ifdef UAPLAY_PS5_SOFTWARE
             if(ps5_stick_hud_kind && SDL_GetTicks()-ps5_stick_hud_at<1500u){
                 char indicator[80];
