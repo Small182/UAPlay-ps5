@@ -12,6 +12,8 @@
 #include <locale.h>
 #include <net/if.h>
 #include <poll.h>
+#include <pthread.h>
+#include <stdint.h>
 #include <pwd.h>
 #include <stdlib.h>
 #include <string.h>
@@ -208,3 +210,13 @@ void ZSTD_trace_decompress_end(unsigned long long context, const void *trace) {
     (void)context;
     (void)trace;
 }
+
+#ifdef UAPLAY_USE_VLC_COMPAT
+/* C11 thread termination is not exported by the PS5 native title SDK.
+ * POSIX pthread_exit supplies the equivalent thread-local termination;
+ * preserve the integer result in the pointer-sized join value. */
+__attribute__((noreturn)) void thrd_exit(int result) {
+    pthread_exit((void *)(intptr_t)result);
+    __builtin_unreachable();
+}
+#endif
