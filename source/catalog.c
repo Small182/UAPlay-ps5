@@ -2128,6 +2128,186 @@ unavailable:
     return 0;
 }
 
+
+#ifdef __PS5__
+/* The web front-end uses these Cloudflare provider IDs. Prefer its ranked
+   results on PS5 too, preserving the legacy provider IDs and the native
+   direct-network implementation for offline or blocked Workers. */
+static const char *uaplay_web_provider_name(int selected){
+    switch(selected){
+        case 2:return "uaserials";
+        case 3:return "eneyida";
+        case 4:return "uafilm";
+        case 6:return "mikai";
+        case 7:return "animeon";
+        default:return NULL;
+    }
+}
+static const char *uaplay_web_provider_label(int selected){
+    switch(selected){
+        case 2:return "UASerials";
+        case 3:return "Eneyida";
+        case 4:return "UAFilm";
+        case 6:return "Mikai";
+        case 7:return "AnimeON";
+        default:return "";
+    }
+}
+static int uaplay_web_api_search_provider(const Movie *movie,Source *items,int max,
+                                          int selected,char *error,int error_size){
+    char origin[256];
+    const char *provider=uaplay_web_provider_name(selected);
+    if(!provider || !uaplay_web_api_origin(origin,sizeof(origin)))return -1;
+    if(!movie || !movie->title[0] || max<=0)return 0;
+    char *title=encode(movie->title);
+    char *original=encode(movie->original);
+    if(!title || !original){free(title);free(original);return -1;}
+    size_t size=strlen(origin)+strlen(title)+strlen(original)+220;
+    char *url=malloc(size);
+    if(!url){free(title);free(original);return -1;}
+    snprintf(url,size,
+             "%s/api/providers/search?provider=%s&q=%s&type=%s&original=%s&year=%.4s",
+             origin,provider,title,movie->series?"tv":"movie",original,movie->year);
+    free(title);free(original);
+    char *json=request(url,error,error_size);
+    free(url);
+    if(!json)return -1;
+    const char *stop=json+strlen(json);
+    const char *cursor=json_array_start(json,stop,"results");
+    if(!cursor){free(json);return -1;}
+    int count=0;
+    while(cursor && cursor<stop && count<max){
+        cursor=json_ws(cursor);
+        if(*cursor==']')break;
+        if(*cursor==','){cursor++;continue;}
+        if(*cursor!='{')break;
+        const char *end=object_end(cursor);
+        if(!end || end>stop)break;
+        char title_value[192]={0},id[1024]={0},web_url[1024]={0};
+        json_field(cursor,end,"title",title_value,sizeof(title_value));
+        json_field(cursor,end,"id",id,sizeof(id));
+        json_field(cursor,end,"url",web_url,sizeof(web_url));
+        Source candidate={0};
+        if(selected==6 || selected==7){
+            /* Cloudflare's anime APIs return a stable numeric ID; preserve
+               the native source URL so video/episode fallback still works. */
+            const char *numeric=id;
+            while(*numeric>='0' && *numeric<='9')numeric++;
+            if(*id && !*numeric){
+                if(selected==6)snprintf(candidate.url,sizeof(candidate.url),
+                    "https://api.mikai.me/public/v1/anime/%s/player",id);
+                else snprintf(candidate.url,sizeof(candidate.url),
+                    "https://animeon.club/api/player/%s",id);
+            }
+        }else if(!strncmp(web_url,"https://",8))
+            snprintf(candidate.url,sizeof(candidate.url),"%s",web_url);
+        else if(!strncmp(id,"https://",8))
+            snprintf(candidate.url,sizeof(candidate.url),"%s",id);
+        if(candidate.url[0] && title_value[0]){
+            /* Do not treat source-provided strings as printf format strings. */
+            snprintf(candidate.title,sizeof(candidate.title),"%s: %.176s",
+                     uaplay_web_provider_label(selected),title_value);
+            int duplicate=0;
+            for(int i=0;i<count;i++)
+                if(!strcmp(items[i].url,candidate.url))duplicate=1;
+            if(!duplicate)items[count++]=candidate;
+        }
+        cursor=end;
+    }
+    free(json);
+    if(count)error[0]=0;
+    else snprintf(error,error_size,"%s",
+                  TR("Нічого не знайдено","No results found"));
+    return count;
+}
+
+/* Restrict the Worker media endpoint to the five configured providers;
+   do not create a general-purpose HTTP proxy from an arbitrary URL. */
+static const char *uaplay_web_api_media_provider(const char *source,
+                                                 const char **id){
+    if(!strncmp(source,"https://uaserials.my/",21)){
+        *id=source;return "uaserials";
+    }
+    if(!strncmp(source,"https://eneyida.tv/",19)){
+        *id=source;return "eneyida";
+    }
+    if(!strncmp(source,"https://klonua.com/",19)){
+        *id=source;return "uafilm";
+    }
+    static const char mikai[]="https://api.mikai.me/public/v1/anime/";
+    if(!strncmp(source,mikai,sizeof(mikai)-1)){
+        const char *number=source+sizeof(mikai)-1;
+        const char *p=number;
+        while(*p>='0'&&*p<='9')p++;
+        if(p>number && !strcmp(p,"/player")){*id=number;return "mikai";}
+    }
+    static const char animeon[]="https://animeon.club/api/player/";
+    if(!strncmp(source,animeon,sizeof(animeon)-1)){
+        const char *number=source+sizeof(animeon)-1;
+        const char *p=number;
+        while(*p>='0'&&*p<='9')p++;
+        if(p>number && !*p){*id=number;return "animeon";}
+    }
+    return NULL;
+}
+static char *uaplay_web_api_media(const char *source,char *error,int error_size){
+    char origin[256];
+    const char *id=NULL;
+    const char *provider=uaplay_web_api_media_provider(source,&id);
+    if(!provider || !uaplay_web_api_origin(origin,sizeof(origin)))return NULL;
+    char id_copy[1024];
+    if(!strcmp(provider,"mikai")){
+        size_t len=strcspn(id,"/");
+        if(len<1 || len>12)return NULL;
+        snprintf(id_copy,sizeof(id_copy),"%.*s",(int)len,id);
+        id=id_copy;
+    }
+    char *encoded=encode(id);
+    if(!encoded)return NULL;
+    size_t size=strlen(origin)+strlen(encoded)+110;
+    char *url=malloc(size);
+    if(!url){free(encoded);return NULL;}
+    snprintf(url,size,"%s/api/providers/media?provider=%s&id=%s",
+             origin,provider,encoded);
+    free(encoded);
+    char *json=request(url,error,error_size);
+    free(url);
+    return json;
+}
+/* Return -1 when the endpoint was not used, 0 if the provider returned no
+   direct video, 1 on success. Non-direct iframes remain a native fallback. */
+static int uaplay_web_api_resolve(const char *source,char *stream,int size,
+                                  char *error,int error_size){
+    if(!uaplay_web_api_origin((char[256]){0},256))return -1;
+    const char *id=NULL;
+    if(!uaplay_web_api_media_provider(source,&id))return -1;
+    char *json=uaplay_web_api_media(source,error,error_size);
+    if(!json)return -1;
+    int found=0;
+    const char *stop=json+strlen(json);
+    const char *cursor=json_array_start(json,stop,"streams");
+    while(cursor && cursor<stop){
+        cursor=json_ws(cursor);
+        if(*cursor==']')break;
+        if(*cursor==','){cursor++;continue;}
+        if(*cursor!='{')break;
+        const char *end=object_end(cursor);
+        if(!end || end>stop)break;
+        char url[2048]={0};
+        json_field(cursor,end,"url",url,sizeof(url));
+        if(!strncmp(url,"https://",8) && is_video_link(url)
+           && strlen(url)<(size_t)size){
+            snprintf(stream,(size_t)size,"%s",url);
+            found=1;break;
+        }
+        cursor=end;
+    }
+    free(json);
+    if(found)error[0]=0;
+    return found;
+}
+#endif /* __PS5__ */
+
 int uakino_search_provider(const Movie *movie, Source *items, int max,
                            int selected, char *error, int error_size) {
     int count=0;
@@ -2136,6 +2316,12 @@ int uakino_search_provider(const Movie *movie, Source *items, int max,
     const char *localized=movie->title;
     const char *original=movie->original;
     error[0]=0;
+#ifdef __PS5__
+    int web_results=uaplay_web_api_search_provider(movie,items,max,selected,error,error_size);
+    if(web_results>=0)return web_results;
+    /* HTTP failure: use the native search already shipped with UAPlay-nx. */
+    error[0]=0;
+#endif
     if(selected==UAKINO_PROVIDER_MOVY){
         if(max<1 || movie->id<=0)return 0;
         if(movie->series)
@@ -2556,6 +2742,13 @@ int uakino_resolve(const Source *source, char *stream, int size,
                    char *error, int error_size) {
     resolved_subtitle_count=0;
     resolved_audio_count=0;
+#ifdef __PS5__
+    int web_stream=uaplay_web_api_resolve(source->url,stream,size,error,error_size);
+    if(web_stream==1)return 1;
+    /* A Worker may expose only a browser iframe. Try the native resolver
+       before reporting that no playable media was found. */
+    error[0]=0;
+#endif
     if(movy_stream_url(source->url)){
         if(strlen(source->url)>=(size_t)size)return 0;
         snprintf(stream,(size_t)size,"%s",source->url);
