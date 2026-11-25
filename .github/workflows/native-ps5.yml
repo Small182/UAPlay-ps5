@@ -46,12 +46,34 @@ jobs:
           python3 -m py_compile scripts/patch-ps5-linker.py
       - name: Verify portable catalogue behavior
         run: bash scripts/test-portable.sh
+      # Restore only pinned toolchain/dependencies, never application objects
+      # (which may contain the repository's TMDb build secret).
+      - name: Restore PS5 SDK and PacBrew
+        id: ps5_deps
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            /tmp/uaplay-ps5-title-template/.deps/native
+            /tmp/uaplay-ps5-title-template/.deps/pacbrew
+          key: ${{ runner.os }}-${{ runner.arch }}-ps5-deps-v2-0a6fb4b851da86cd4e9512aae3abf1352a96086a
       - name: Retrieve pinned native title runtime
         run: |
-          git clone --quiet https://github.com/leolobato/ps5-homebrew-ui.git "$PS5_NATIVE_TEMPLATE"
-          git -C "$PS5_NATIVE_TEMPLATE" checkout --detach 0a6fb4b851da86cd4e9512aae3abf1352a96086a
+          mkdir -p "$PS5_NATIVE_TEMPLATE"
+          git -C "$PS5_NATIVE_TEMPLATE" init --quiet
+          git -C "$PS5_NATIVE_TEMPLATE" fetch --quiet --depth=1 https://github.com/leolobato/ps5-homebrew-ui.git 0a6fb4b851da86cd4e9512aae3abf1352a96086a
+          git -C "$PS5_NATIVE_TEMPLATE" checkout --detach FETCH_HEAD
           chmod +x "$PS5_NATIVE_TEMPLATE/tooling/prospero-clang18"
           bash "$PS5_NATIVE_TEMPLATE/tools/setup-native-dependencies.sh"
+          bash "$PS5_NATIVE_TEMPLATE/tools/setup-pacbrew-dependencies.sh" --resolve sdl2 SDL2_ttf SDL2_image libcurl >/dev/null
+      - name: Save PS5 SDK and PacBrew immediately
+        if: steps.ps5_deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        with:
+          path: |
+            /tmp/uaplay-ps5-title-template/.deps/native
+            /tmp/uaplay-ps5-title-template/.deps/pacbrew
+          key: ${{ steps.ps5_deps.outputs.cache-primary-key }}
       - name: Prepare TMDb key
         env:
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
@@ -60,8 +82,48 @@ jobs:
         env:
           UAPLAY_WEB_API_URL: ${{ vars.UAPLAY_WEB_API_URL }}
         run: bash scripts/prepare-web-api.sh
-      - name: Build pinned native libVLC and plugins
-        run: bash scripts/prepare-libvlc-ps5.sh
+      # Keep the exact absolute paths: link.rsp contains absolute archive paths.
+      # The key changes only when the upstream build recipe or pinned SDK changes.
+      - name: Restore compiled libVLC, FFmpeg and plugins
+        id: vlc_deps
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            /tmp/uaplay-vlc-work/build-vlc-ps5
+            /tmp/uaplay-vlc-work/prefix-ps5
+            /tmp/uaplay-vlc-work/static-ps5
+            /tmp/uaplay-vlc-work/src/vlc-3.0.24/include
+          key: ${{ runner.os }}-${{ runner.arch }}-vlc-3.0.24-sdk-0.42-v2-${{ hashFiles('scripts/prepare-libvlc-ps5.sh') }}
+      - name: Build or reuse pinned native libVLC and plugins
+        run: |
+          set -euo pipefail
+          work=/tmp/uaplay-vlc-work
+          if [[ "${{ steps.vlc_deps.outputs.cache-hit }}" == "true" ]] &&
+             [[ -s "$work/build-vlc-ps5/lib/.libs/libvlc.a" &&
+                -s "$work/build-vlc-ps5/src/.libs/libvlccore.a" &&
+                -s "$work/static-ps5/static_modules.c" &&
+                -s "$work/static-ps5/link.rsp" &&
+                -s "$work/prefix-ps5/lib/libps5compat.a" &&
+                -s "$work/src/vlc-3.0.24/include/vlc/vlc.h" ]]; then
+            echo "Reusing compiled libVLC, FFmpeg and plugins"
+            git clone --quiet --no-checkout https://github.com/ZiZc3/VLC.git /tmp/uaplay-vlc-upstream
+            git -C /tmp/uaplay-vlc-upstream checkout --detach 7f104abb5a88dd675b60261769dc86d5dfb0a0d4
+          else
+            echo "Building native VLC dependencies (cold or incomplete cache)"
+            rm -rf "$work"
+            bash scripts/prepare-libvlc-ps5.sh
+          fi
+      - name: Save compiled VLC before UAPlay linking
+        if: steps.vlc_deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        with:
+          path: |
+            /tmp/uaplay-vlc-work/build-vlc-ps5
+            /tmp/uaplay-vlc-work/prefix-ps5
+            /tmp/uaplay-vlc-work/static-ps5
+            /tmp/uaplay-vlc-work/src/vlc-3.0.24/include
+          key: ${{ steps.vlc_deps.outputs.cache-primary-key }}
       - name: Cross-compile the native PS5 UAPlay title
         run: bash scripts/build-ps5-software.sh
       - name: Verify native title files
