@@ -2130,6 +2130,8 @@ unavailable:
 
 
 #ifdef __PS5__
+/* The native file/playlist resolver is defined below. */
+static int is_video_link(const char *url);
 /* The web front-end uses these Cloudflare provider IDs. Prefer its ranked
    results on PS5 too, preserving the legacy provider IDs and the native
    direct-network implementation for offline or blocked Workers. */
