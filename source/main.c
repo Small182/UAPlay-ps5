@@ -1832,11 +1832,12 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
             }
             const int start=chosen/12*12;
             for(int i=start;i<n && i<start+12;i++){
-                int k=i-start,x=54+k%6*201,y=162+k/6*245;
+                int k=i-start,x=53+k%6*201,y=160+k/6*247;
                 if(i==chosen && catalog_hero_focus==0)
-                    selection_frame(p,x,y,138,206);
-                poster(p,&movies[i],x,y,138,206,&poster_budget);
-                card_title(p,movies[i].title,x,y+209,166);
+                    selection_frame(p,x,y,150,221);
+                poster(p,&movies[i],x,y,150,221,&poster_budget);
+                card_title(p,movies[i].title,x,y+227,170);
+                press_preview(p,x,y,150,221,12);
             }
         }else if(expanded_catalog){
             headline(p,heading,UI_EDGE,97,960);
@@ -1857,11 +1858,12 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
             button(p,"‹  Назад",1106,98,142,44,0);
             int start=chosen/12*12;
             for(int i=start;i<n && i<start+12;i++){
-                int k=i-start,x=54+k%6*201,y=153+k/6*246;
-                if(i==chosen)selection_frame(p,x,y,138,206);
-                poster(p,&movies[i],x,y,138,206,&poster_budget);
+                int k=i-start,x=53+k%6*201,y=154+k/6*251;
+                if(i==chosen)selection_frame(p,x,y,150,221);
+                poster(p,&movies[i],x,y,150,221,&poster_budget);
+                card_title(p,movies[i].title,x,y+226,170);
+                press_preview(p,x,y,150,221,12);
             }
-            if(n)text_muted(p,movies[chosen].title,54,635,1150);
         }else{
             int active=chosen>=0 && chosen<n?chosen:0;
             enum { HERO_Y=92, HERO_W=1216, HERO_H=222, HERO_PAD=12,
@@ -1879,9 +1881,20 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
                 poster(p,&movies[active],hero_poster_x,hero_top,
                        HERO_POSTER_W,hero_bottom-hero_top,&poster_budget);
                 headline(p,movies[active].title,hero_left,hero_top,967);
-                char tag[110];
-                snprintf(tag,sizeof(tag),"%s  ·  %s",movies[active].year,
-                         movies[active].series?"Серіал":"Фільм");
+                char tag[160];
+                if(movies[active].series && movies[active].season_count>0 &&
+                   movies[active].episode_count>0)
+                    snprintf(tag,sizeof(tag),"%s · %d %s · %d %s",
+                             movies[active].year,movies[active].season_count,
+                             TR("сез.","seasons"),movies[active].episode_count,
+                             TR("серій","episodes"));
+                else if(!movies[active].series && movies[active].runtime_minutes>0)
+                    snprintf(tag,sizeof(tag),"%s · %s · %d %s",
+                             movies[active].year,TR("Фільм","Movie"),
+                             movies[active].runtime_minutes,TR("хв","min"));
+                else snprintf(tag,sizeof(tag),"%s · %s",movies[active].year,
+                              movies[active].series?TR("Серіал","Series"):
+                                                     TR("Фільм","Movie"));
                 text_muted(p,tag,hero_left,hero_top+50,890);
                 wrapped(p,movies[active].overview,hero_left,hero_top+90,949,2,27,
                         p->font_small,.74f,.79f,.84f);
@@ -3138,11 +3151,11 @@ int main(void) {
                                 key=SDL_CONTROLLER_BUTTON_A;
                             }
                         }
-                        if(ty>=162 && ty<613 && tx>=54){
-                            int col=(tx-54)/201,row=(ty-162)/245;
+                        if(ty>=160 && ty<655 && tx>=53){
+                            int col=(tx-53)/201,row=(ty-160)/247;
                             int index=chosen/12*12+row*6+col;
-                            if(col<6 && row<2 && index<n && (tx-54)%201<138 &&
-                               (ty-162)%245<206){
+                            if(col<6 && row<2 && index<n && (tx-53)%201<150 &&
+                               (ty-160)%247<240){
                                 chosen=index;
                                 catalog_hero_focus=0;
                                 clear_history_confirm=0;
@@ -3159,11 +3172,11 @@ int main(void) {
                                 }
                         }
                         if(ty>=95 && ty<145 && tx>=1106){expanded_catalog=0;chosen=0;catalog_hero_focus=0;continue;}
-                        if(ty>=153 && ty<613 && tx>=54){
-                            int col=(tx-54)/201,row=(ty-153)/246;
+                        if(ty>=154 && ty<663 && tx>=53){
+                            int col=(tx-53)/201,row=(ty-154)/251;
                             int index=chosen/12*12+row*6+col;
-                            if(col<6 && row<2 && index<n && (tx-54)%201<138 &&
-                               (ty-153)%246<206){
+                            if(col<6 && row<2 && index<n && (tx-53)%201<150 &&
+                               (ty-154)%251<245){
                                 chosen=index;catalog_hero_focus=0;key=SDL_CONTROLLER_BUTTON_A;
                             }
                         }
@@ -3255,16 +3268,18 @@ int main(void) {
                         key=tx<640?SDL_CONTROLLER_BUTTON_DPAD_LEFT:SDL_CONTROLLER_BUTTON_DPAD_RIGHT;
                     }else if(ty<92 && tx<100)key=SDL_CONTROLLER_BUTTON_B;
                 }else if(page==SETTINGS || page==APPEARANCE){
-                    if(tx>=32 && tx<449 && ty>=SETTINGS_Y &&
-                       ty<SETTINGS_Y+SETTING_COUNT*SETTINGS_ROW_STEP){
-                        int row=(ty-SETTINGS_Y)/SETTINGS_ROW_STEP;
-                        if((ty-SETTINGS_Y)%SETTINGS_ROW_STEP<SETTINGS_ROW_HEIGHT){
+                    int first=page==SETTINGS?107:117;
+                    int step=page==SETTINGS?99:119;
+                    int height=page==SETTINGS?88:103;
+                    int count=page==SETTINGS?SETTING_COUNT:APPEARANCE_COUNT;
+                    if(tx>=32 && tx<1248 && ty>=first && ty<first+count*step){
+                        int row=(ty-first)/step;
+                        if(row<count && (ty-first)%step<height){
                             if(page==SETTINGS)settings_selected=row;
                             else appearance_selected=row;
                             key=SDL_CONTROLLER_BUTTON_A;
                         }
-                    }else if(ty>=537 && ty<592 && tx>=515 && tx<773)key=SDL_CONTROLLER_BUTTON_A;
-                    else if(ty<92 && tx<100)key=SDL_CONTROLLER_BUTTON_B;
+                    }else if(ty<92 && tx<100)key=SDL_CONTROLLER_BUTTON_B;
                 }else if(page==ACCENT_PALETTE){
                     if(tx>=ACCENT_GRID_X && ty>=ACCENT_GRID_Y){
                         int c=(tx-ACCENT_GRID_X)/ACCENT_STEP_X;
