@@ -3181,6 +3181,49 @@ int main(void) {
                         else if(tx>=999 && tx<1057)key=SDL_CONTROLLER_BUTTON_Y;
                         else if(tx>=1109 && tx<1167)key=SDL_CONTROLLER_BUTTON_X;
                     }else continue;
+                }else if(page==IPTV_CHANNELS){
+                    if(ty<78 && tx>=193 && tx<830){
+                        int focus=main_tab_at(tx);
+                        if(focus>=7 && focus<=11 && focus!=IPTV_TAB_FOCUS){
+                            category=category_for_tab(focus-7);
+                            if(focus==7)home_shelf=0;
+                            query[0]=message[0]=0;
+                            page=CATALOG;
+                            n=load_category(category,query,movies,message,sizeof(message));
+                            chosen=0;expanded_catalog=0;catalog_hero_focus=focus;
+                        }
+                        continue;
+                    }
+                    if(ty<78 && tx>=1058 && tx<1111){
+                        settings_selected=0;page=SETTINGS;continue;
+                    }
+                    if(ty<78 && tx>=887 && tx<1044){
+                        ps5_tv_filter_focus=4;
+                        key=SDL_CONTROLLER_BUTTON_RIGHTSTICK;
+                    }else if(ty>=101 && ty<147){
+                        const int x_positions[]={32,412,782};
+                        const int widths[]={364,354,236};
+                        for(int i=0;i<3;i++)if(tx>=x_positions[i] &&
+                                                tx<x_positions[i]+widths[i]){
+                            ps5_tv_filter_focus=i+1;
+                            key=SDL_CONTROLLER_BUTTON_A;
+                            break;
+                        }
+                    }else if(ty>=158 && ty<204 && tx>=32 && tx<1248){
+                        ps5_tv_filter_focus=4;
+                        key=SDL_CONTROLLER_BUTTON_RIGHTSTICK;
+                    }else if(ty>=219 && ty<606 && tx>=38){
+                        int column=(tx-38)/305,row=(ty-219)/129;
+                        int index=ps5_tv_selection/12*12+row*4+column;
+                        if(column<4 && row<3 && index<ps5_tv_visible_count() &&
+                           (tx-38)%305<285 && (ty-219)%129<108){
+                            int local_x=(tx-38)%305,local_y=(ty-219)%129;
+                            ps5_tv_selection=index;
+                            ps5_tv_filter_focus=0;
+                            key=local_x>=245 && local_y<48?
+                                SDL_CONTROLLER_BUTTON_Y:SDL_CONTROLLER_BUTTON_A;
+                        }
+                    }
                 }else if(page==CATALOG){
                     if(ty<78 && tx>=193 && tx<830){
                         int focus=main_tab_at(tx);
