@@ -96,7 +96,7 @@ after = "    std::vector<ModuleRecord> modules;"
 for hook in (before, missing, after):
     if source.count(hook) != 1:
         raise SystemExit("Unexpected native converter import-validation hook: " + hook)
-source = source.replace(before, "    std::string missing_imports;\\n" + before)
+source = source.replace(before, "    std::string missing_imports;" + chr(10) + before)
 source = source.replace(missing, """        if (provider == nullptr)
         {
             missing_imports += "\\n  " + symbol.name;
