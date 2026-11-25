@@ -60,13 +60,12 @@ static void video_diagnostic(mpv_handle *p,const char *stage,int detail){
 }
 
 static void audio_tick(mpv_handle *p) {
-    if (!p || !p->decoder || !p->audio ||
-        Kit_GetPlayerState(p->decoder)!=KIT_PLAYING) return;
-    Uint32 queued=SDL_GetQueuedAudioSize(p->audio);
+    if (!p || !p->decoder || Kit_GetPlayerState(p->decoder)!=KIT_PLAYING) return;
+    Uint32 queued=p->audio?SDL_GetQueuedAudioSize(p->audio):0;
     if (queued>=32768) return;
     Uint8 buffer[8192];
     int bytes=Kit_GetPlayerAudioData(p->decoder,queued,buffer,sizeof(buffer));
-    if (bytes<=0 || bytes>(int)sizeof(buffer)) return;
+    if (bytes<=0 || bytes>(int)sizeof(buffer) || !p->audio) return;
     if (p->volume<99.9) {
         /* Audio output was explicitly requested as signed 16-bit PCM. */
         for (int i=0;i+1<bytes;i+=2) {
@@ -197,6 +196,15 @@ static int open_stream(mpv_handle *p,const char *url) {
     if(v<0 && a<0)goto error;
     int s=v<0?-1:Kit_GetBestSourceStream(p->source,KIT_STREAMTYPE_SUBTITLE);
     p->decoder=Kit_CreatePlayer(p->source,v,a,s,&video,&audio,1280,720);
+    if(!p->decoder && s>=0){
+        video_diagnostic(p,"Retry without subtitle decoder",s);
+        p->decoder=Kit_CreatePlayer(p->source,v,a,-1,&video,&audio,1280,720);
+    }
+    if(!p->decoder && v>=0 && a>=0){
+        video_diagnostic(p,"Retry video-only decoder",v);
+        p->decoder=Kit_CreatePlayer(p->source,v,-1,-1,&video,&audio,1280,720);
+        if(p->decoder)a=-1;
+    }
     if(!p->decoder)goto error;
     video_diagnostic(p,"Decoder created",0);
     if (a>=0) {
@@ -210,8 +218,10 @@ static int open_stream(mpv_handle *p,const char *url) {
                          (Uint8)info.audio_format.channels:2;
         desired.samples=1024;
         p->audio=SDL_OpenAudioDevice(NULL,0,&desired,NULL,0);
-        if(!p->audio)fprintf(stderr,"UAPlay: audio unavailable: %s\n",SDL_GetError());
-        else SDL_PauseAudioDevice(p->audio,0);
+        if(!p->audio){
+            fprintf(stderr,"UAPlay: audio unavailable: %s\n",SDL_GetError());
+            video_diagnostic(p,"Audio device unavailable; drain audio without output",0);
+        }else SDL_PauseAudioDevice(p->audio,0);
     }
     Kit_PlayerPlay(p->decoder);
     video_diagnostic(p,"Playback started",Kit_GetPlayerState(p->decoder));
@@ -222,6 +232,7 @@ error:
     if(p->error<0)av_strerror(p->error,p->error_text,sizeof(p->error_text));
     else snprintf(p->error_text,sizeof(p->error_text),"%s",Kit_GetError());
     fprintf(stderr,"UAPlay PS5 video open: %s\n",p->error_text);
+    {FILE *f=fopen(UAPLAY_DATA_ROOT "/video.log","a");if(f){fprintf(f,"Open error: %s\n",p->error_text);fclose(f);}}
     clear_stream(p);
     if(!p->error)p->error=-1;
     video_diagnostic(p,"Open failed",p->error);
@@ -306,8 +317,8 @@ mpv_event *mpv_wait_event(mpv_handle *p,double timeout) {
     audio_tick(p);
     if(p->event_stage==1){p->event_stage=2;result.event_id=MPV_EVENT_START_FILE;}
     else if(p->event_stage==2 && p->decoder){
-        unsigned int frames=0;
-        Kit_GetPlayerVideoBufferState(p->decoder,&frames,NULL,NULL,NULL);
+        unsigned int frames=0,packets=0;
+        Kit_GetPlayerVideoBufferState(p->decoder,&frames,NULL,&packets,NULL);
         if(p->first_frame || Kit_GetPlayerVideoStream(p->decoder)<0){
             p->event_stage=0;result.event_id=MPV_EVENT_FILE_LOADED;
             video_diagnostic(p,"First decoded frame ready",(int)frames);
@@ -317,6 +328,7 @@ mpv_event *mpv_wait_event(mpv_handle *p,double timeout) {
         }else if(SDL_GetTicks()-p->last_diagnostic>=5000u){
             p->last_diagnostic=SDL_GetTicks();
             video_diagnostic(p,"Waiting for decoded frame",(int)frames);
+            video_diagnostic(p,"Queued video packets",(int)packets);
             video_diagnostic(p,"Decoder state",Kit_GetPlayerState(p->decoder));
         }
     }
@@ -330,6 +342,7 @@ mpv_event *mpv_wait_event(mpv_handle *p,double timeout) {
     }
     return &result;
 }
+const char *ps5_kitchen_last_error(mpv_handle *p){return p && p->error_text[0]?p->error_text:NULL;}
 const char *mpv_error_string(int code) {
     if(code==-2)return "Декодер зупинився до першого кадру";
     if(code==-1)return "Помилка SDL_kitchensink / FFmpeg";
