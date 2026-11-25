@@ -42,7 +42,10 @@ s = s.replace(marker, '''    vlc_libs=()
 marker = 'wrap_options=()\n'
 if s.count(marker) != 1:
     raise SystemExit("Expected template wrapper hook")
-s = s.replace(marker, marker + '''wrap_options+=(--error-limit=0 --exclude-libs=ALL --wrap=mmap --wrap=munmap --wrap=geteuid --wrap=getegid -u vlc_static_modules)
+s = s.replace(marker, marker + '''# libc++ embeds an ELF dependent-library directive for pthread, but PS5
+# supplies pthread symbols via the explicit libkernel imports, not libpthread.
+# Ignore automatic library directives; unresolved symbols are still fatal.
+wrap_options+=(--no-dependent-libraries --error-limit=0 --exclude-libs=ALL --wrap=mmap --wrap=munmap --wrap=geteuid --wrap=getegid -u vlc_static_modules)
 # Reuse VLC's console compatibility symbol mappings, except for resolver
 # calls already implemented by UAPlay's console_curl.c.
 while IFS= read -r name; do
