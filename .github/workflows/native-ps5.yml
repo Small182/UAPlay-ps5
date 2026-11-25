@@ -73,6 +73,17 @@ jobs:
           name: UAPlay-PS5-Folder-UNTESTED
           path: UAPlay-PS5-title-folder.tar.gz
           if-no-files-found: error
+      - name: Check exFAT packaging script
+        run: bash -n scripts/package-native-exfat.sh
+      - name: Create 64 KiB exFAT image for ShadowMountPlus
+        run: bash scripts/package-native-exfat.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UAPlay-PS5-exFAT-FW13-UNTESTED
+          path: /tmp/uaplay-ps5-output/PPSA99283.exfat
+          if-no-files-found: error
+          retention-days: 14
+
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
@@ -84,13 +95,3 @@ jobs:
           path: /tmp/uaplay-ps5-output/PPSA99283.ffpkg
           if-no-files-found: error
 
-      - name: Check exFAT packaging script
-        run: bash -n scripts/package-native-exfat.sh
-      - name: Create 64 KiB exFAT image for ShadowMountPlus
-        run: bash scripts/package-native-exfat.sh
-      - uses: actions/upload-artifact@v4
-        with:
-          name: UAPlay-PS5-exFAT-FW13-UNTESTED
-          path: /tmp/uaplay-ps5-output/PPSA99283.exfat
-          if-no-files-found: error
-          retention-days: 14
