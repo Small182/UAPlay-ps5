@@ -71,7 +71,7 @@ metadata["contentVersion"] = "01.000.012"
 path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 PY
     make libc
-    APP_DEFINITIONS='__PS5__ SDL_MAIN_HANDLED UAPLAY_PS5_SOFTWARE' \
+    APP_DEFINITIONS='__PS5__ SDL_MAIN_HANDLED UAPLAY_PS5_SOFTWARE UAPLAY_USE_VLC_COMPAT' \
     APP_INCLUDE_PATHS='vlc-headers' \
     PACBREW_PACKAGES='sdl2 SDL2_ttf SDL2_image libcurl' \
     bash tools/build.sh Folder
