@@ -76,6 +76,89 @@ typedef struct {
 static Entry entries[MAX_LIBRARY_ITEMS];
 static int total;
 
+
+/* Episode-granular local playback history; compatible with the existing
+   library.tsv and independent of UAPlay-web localStorage. */
+#define MAX_EPISODE_STATES 8192
+#define EPISODE_STATUS_FILE LIBRARY_DIR "/episode-status.tsv"
+#define EPISODE_STATUS_TMP LIBRARY_DIR "/episode-status.tmp"
+#define EPISODE_STATUS_BACKUP LIBRARY_DIR "/episode-status.bak"
+typedef struct {
+    int movie_id,series,season,episode,completed;
+    double position;
+} EpisodeState;
+static EpisodeState episode_states[MAX_EPISODE_STATES];
+static int episode_states_count;
+
+static EpisodeState *episode_state_for(const Movie *movie,int season,int episode,int create){
+    if(!movie || movie->id<=0 || season<1 || episode<1)return NULL;
+    for(int i=0;i<episode_states_count;i++){
+        EpisodeState *s=&episode_states[i];
+        if(s->movie_id==movie->id && s->series==movie->series &&
+           s->season==season && s->episode==episode)return s;
+    }
+    if(!create || episode_states_count>=MAX_EPISODE_STATES)return NULL;
+    EpisodeState *state=&episode_states[episode_states_count++];
+    memset(state,0,sizeof(*state));
+    state->movie_id=movie->id;
+    state->series=movie->series;
+    state->season=season;
+    state->episode=episode;
+    return state;
+}
+static void episode_status_save(void){
+    mkdir(UAPLAY_DATA_ROOT,0777);
+    mkdir(LIBRARY_DIR,0777);
+    FILE *file=fopen(EPISODE_STATUS_TMP,"wb");
+    if(!file)return;
+    for(int i=0;i<episode_states_count;i++){
+        const EpisodeState *s=&episode_states[i];
+        fprintf(file,"%d|%d|%d|%d|%.1f|%d\n",s->movie_id,s->series,
+                s->season,s->episode,s->position,s->completed);
+    }
+    if(fclose(file)!=0){remove(EPISODE_STATUS_TMP);return;}
+    FILE *old=fopen(EPISODE_STATUS_FILE,"rb");
+    int exists=old!=NULL;
+    if(old)fclose(old);
+    if(exists){
+        remove(EPISODE_STATUS_BACKUP);
+        if(rename(EPISODE_STATUS_FILE,EPISODE_STATUS_BACKUP)!=0){
+            remove(EPISODE_STATUS_TMP);return;
+        }
+    }
+    if(rename(EPISODE_STATUS_TMP,EPISODE_STATUS_FILE)!=0){
+        if(exists)rename(EPISODE_STATUS_BACKUP,EPISODE_STATUS_FILE);
+        remove(EPISODE_STATUS_TMP);
+    }
+}
+static void episode_status_load(void){
+    episode_states_count=0;
+    FILE *file=fopen(EPISODE_STATUS_FILE,"rb");
+    if(!file)file=fopen(EPISODE_STATUS_BACKUP,"rb");
+    if(!file)return;
+    char line[160];
+    while(episode_states_count<MAX_EPISODE_STATES && fgets(line,sizeof(line),file)){
+        EpisodeState state={0};
+        if(sscanf(line,"%d|%d|%d|%d|%lf|%d",
+                  &state.movie_id,&state.series,&state.season,&state.episode,
+                  &state.position,&state.completed)!=6)continue;
+        if(state.movie_id<1 || state.season<1 || state.episode<1 ||
+           (state.series!=0 && state.series!=1))continue;
+        if(state.position<0 || state.position>36000)state.position=0;
+        state.completed=!!state.completed;
+        episode_states[episode_states_count++]=state;
+    }
+    fclose(file);
+}
+static void episode_status_set(const Movie *movie,int season,int episode,
+                               double seconds,int completed){
+    EpisodeState *state=episode_state_for(movie,season,episode,1);
+    if(!state)return;
+    if(completed)state->completed=1;
+    state->position=completed?0:(seconds>0?seconds:0);
+    episode_status_save();
+}
+
 static Entry *entry_for(const Movie *movie, int create) {
     for (int i=0; i<total; i++) {
         if (entries[i].movie.id == movie->id &&
@@ -143,6 +226,7 @@ static void library_save(void) {
 
 void library_init(void) {
     migrate_storage();
+    episode_status_load();
     total=0;
     FILE *file=fopen(LIBRARY_FILE,"rb");
     if(!file)file=fopen(LIBRARY_BACKUP,"rb");
@@ -226,6 +310,7 @@ void library_set_episode_progress(const Movie *movie,int season,int episode,doub
         e->watched=1;e->last_season=season;e->last_episode=episode;
         e->progress=seconds>0?seconds:0;
         library_save();
+        episode_status_set(movie,season,episode,seconds,0);
     }
 }
 int library_last_episode(const Movie *movie,int *season,int *episode,double *seconds){
@@ -236,6 +321,16 @@ int library_last_episode(const Movie *movie,int *season,int *episode,double *sec
     if(seconds)*seconds=e->progress;
     return 1;
 }
+int library_episode_status(const Movie *movie,int season,int episode,double *seconds){
+    EpisodeState *state=episode_state_for(movie,season,episode,0);
+    if(seconds)*seconds=state?state->position:0;
+    return state?(state->completed?2:1):0;
+}
+void library_mark_episode_completed(const Movie *movie,int season,int episode){
+    library_set_episode_progress(movie,season,episode,0);
+    episode_status_set(movie,season,episode,0,1);
+}
+
 int library_list(Movie *items,int capacity,int favorites) {
     int count=0;
     for (int i=total-1;i>=0 && count<capacity;i--) {
@@ -266,6 +361,11 @@ int library_clear_history(void) {
         if(entry.favorite)entries[kept++]=entry;
     }
     total=kept;
+    if(episode_states_count){
+        removed+=episode_states_count;
+        episode_states_count=0;
+        episode_status_save();
+    }
     if(removed)library_save();
     return removed;
 }
