@@ -2,6 +2,7 @@
  * UAPlay native PS5 libVLC adapter. Reuses the catalogue's existing player API.
  * First integration uses CPU video callbacks and SDL output, not Vulkan/HW decode.
  */
+#define _POSIX_C_SOURCE 200809L
 #include "../ps5/kitchensink_mpv.h"
 #include "playback.h"
 #include "posters.h"
@@ -19,7 +20,7 @@ struct mpv_handle {
     SDL_mutex *lock;
     SDL_AudioDeviceID audio;
     unsigned char *frame;
-    unsigned width,height,pitch,serial,generation;
+    unsigned width,height,pitch,serial,decoded,generation;
     int active,started,loaded,volume;
     char ua[160],referer[512],error[256],diag[160];
 };
@@ -45,7 +46,7 @@ static unsigned video_setup(void **opaque,char *chroma,unsigned *w,unsigned *h,
     p->frame=NULL;
     if(posix_memalign((void**)&p->frame,64,(size_t)*pitch**lines)!=0)p->frame=NULL;
     p->width=*w;p->height=*h;p->pitch=*pitch;
-    p->serial=0;
+    p->serial=p->decoded=0;
     snprintf(p->diag,sizeof(p->diag),"VLC video %ux%u",*w,*h);
     SDL_UnlockMutex(p->lock);
     return p->frame?1:0;
@@ -53,7 +54,7 @@ static unsigned video_setup(void **opaque,char *chroma,unsigned *w,unsigned *h,
 static void video_cleanup(void *opaque){
     mpv_handle *p=opaque;
     SDL_LockMutex(p->lock);
-    free(p->frame);p->frame=NULL;p->serial=0;
+    free(p->frame);p->frame=NULL;p->serial=p->decoded=0;
     SDL_UnlockMutex(p->lock);
 }
 static void *video_lock(void *opaque,void **planes){
@@ -65,10 +66,13 @@ static void *video_lock(void *opaque,void **planes){
 static void video_unlock(void *opaque,void *picture,void *const *planes){
     (void)picture;(void)planes;
     mpv_handle *p=opaque;
-    p->serial++;
+    p->decoded++;
     SDL_UnlockMutex(p->lock);
 }
-static void video_display(void *opaque,void *picture){(void)opaque;(void)picture;}
+static void video_display(void *opaque,void *picture){
+    (void)picture;mpv_handle *p=opaque;
+    SDL_LockMutex(p->lock);p->serial=p->decoded;SDL_UnlockMutex(p->lock);
+}
 static void audio_play(void *opaque,const void *samples,unsigned count,int64_t pts){
     (void)pts;
     mpv_handle *p=opaque;
@@ -147,14 +151,16 @@ int mpv_command_async(mpv_handle *p,unsigned long long userdata,const char **a){
     if(!strcmp(a[0],"loadfile")&&a[1]){
         stop(p);p->error[0]=0;
         libvlc_media_t *m=strstr(a[1],"://")?libvlc_media_new_location(p->vlc,a[1]):libvlc_media_new_path(p->vlc,a[1]);
-        if(!m)return -1;
+        if(!m){snprintf(p->error,sizeof(p->error),"libVLC: unable to create media");return -1;}
         char opt[600];
         if(p->ua[0]){snprintf(opt,sizeof(opt),":http-user-agent=%s",p->ua);libvlc_media_add_option(m,opt);}
         if(p->referer[0]){snprintf(opt,sizeof(opt),":http-referrer=%s",p->referer);libvlc_media_add_option(m,opt);}
         libvlc_media_player_set_media(p->mp,m);libvlc_media_release(m);
         p->active=1;snprintf(p->diag,sizeof(p->diag),"VLC opening");
         if(p->audio)SDL_PauseAudioDevice(p->audio,0);
-        return libvlc_media_player_play(p->mp);
+        int rc=libvlc_media_player_play(p->mp);
+        if(rc<0)snprintf(p->error,sizeof(p->error),"libVLC: %s",libvlc_errmsg()?libvlc_errmsg():"unable to start playback");
+        return rc;
     }
     if(!strcmp(a[0],"stop")){stop(p);return 0;}
     if(!strcmp(a[0],"cycle")&&a[1]&&!strcmp(a[1],"pause")){libvlc_media_player_pause(p->mp);return 0;}
@@ -173,6 +179,7 @@ mpv_event *mpv_wait_event(mpv_handle *p,double timeout){
     libvlc_state_t s=libvlc_media_player_get_state(p->mp);
     if(!p->started){p->started=1;e.event_id=MPV_EVENT_START_FILE;return &e;}
     if(s==libvlc_Error||s==libvlc_Ended){
+        if(s==libvlc_Error && !p->error[0])snprintf(p->error,sizeof(p->error),"libVLC media player error");
         p->active=0;end.reason=s==libvlc_Error?MPV_END_FILE_REASON_ERROR:MPV_END_FILE_REASON_EOF;end.error=s==libvlc_Error?-1:0;
         e.event_id=MPV_EVENT_END_FILE;e.data=&end;return &e;
     }
