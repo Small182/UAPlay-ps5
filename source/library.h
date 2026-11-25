@@ -14,6 +14,10 @@ double library_progress(const Movie *movie);
    the last watched season without confusing episode timestamps. */
 void library_set_episode_progress(const Movie *movie,int season,int episode,double seconds);
 int library_last_episode(const Movie *movie,int *season,int *episode,double *seconds);
+/* Episode-level watch state, stored locally on the PS5.
+ * 0 = never started, 1 = started, 2 = fully watched. */
+int library_episode_status(const Movie *movie,int season,int episode,double *seconds);
+void library_mark_episode_completed(const Movie *movie,int season,int episode);
 int library_list(Movie *items, int capacity, int favorites);
 /* Saved titles that have not been watched yet ("На майбутнє"). */
 int library_list_to_watch(Movie *items, int capacity);
