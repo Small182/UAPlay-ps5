@@ -1,9 +1,9 @@
-name: UAPlay PS5 native exFAT
+name: UAPlay PS5 libVLC exFAT
 
 on:
   workflow_dispatch:
   push:
-    branches: [native-ps5, fw13-exfat, fw13-ui-fixes-sync, fw13-native-network-v0510, fw13-main-0510-ui, fw13-web-api-native, fw13-full-web-native]
+    branches: [fw13-libvlc-native]
     paths:
       - 'source/**'
       - 'ps5/**'
@@ -17,7 +17,7 @@ permissions:
 jobs:
   native:
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 330
     env:
       PS5_NATIVE_TEMPLATE: /tmp/uaplay-ps5-title-template
       PS5_NATIVE_OUTPUT: /tmp/uaplay-ps5-output
@@ -28,7 +28,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y clang-18 lld-18 ccache git curl wget unzip rsync \
-            build-essential pkg-config python3 cmake ninja-build libcurl4-openssl-dev ca-certificates exfatprogs exfat-fuse fuse3
+            build-essential pkg-config python3 cmake ninja-build libcurl4-openssl-dev ca-certificates exfatprogs exfat-fuse fuse3 \
+            llvm-18 autoconf automake autopoint libtool gettext meson nasm bison flex texinfo gperf patch python3-mako
       - name: Check Switch 0.5.10 source version and native networking glue
         run: |
           set -euo pipefail
@@ -55,6 +56,8 @@ jobs:
         env:
           UAPLAY_WEB_API_URL: ${{ vars.UAPLAY_WEB_API_URL }}
         run: bash scripts/prepare-web-api.sh
+      - name: Build pinned native libVLC and plugins
+        run: bash scripts/prepare-libvlc-ps5.sh
       - name: Cross-compile the native PS5 UAPlay title
         run: bash scripts/build-ps5-software.sh
       - name: Verify native title files
@@ -72,7 +75,7 @@ jobs:
         run: bash scripts/package-native-exfat.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: UAPlay-PS5-exFAT-FW13-UNTESTED
+          name: UAPlay-PS5-libVLC-exFAT-FW13-UNTESTED
           path: /tmp/uaplay-ps5-output/PPSA99283.exfat
           if-no-files-found: error
           retention-days: 14
