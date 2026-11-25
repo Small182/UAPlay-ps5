@@ -349,7 +349,8 @@ int mpv_initialize(mpv_handle *p){
     setenv("HOME",UAPLAY_DATA_ROOT,1);
     setenv("TMPDIR",UAPLAY_DATA_ROOT "/cache",1);
     /* Check the actual allocation route before creating VLC frame pools. */
-    void *test=aligned_alloc(64,512);
+    extern void *__wrap_aligned_alloc(size_t alignment,size_t size);
+    void *test=__wrap_aligned_alloc(64,512);
     if(!test || ((uintptr_t)test&63u)){free(test);init_status("aligned_alloc failed",NULL);return -1;}
     free(test);
     init_status("hardware probe",NULL);
