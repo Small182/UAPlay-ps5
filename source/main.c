@@ -1810,12 +1810,6 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
                 button(p,labels[i],fx[i],101,fw[i],46,
                        i==2 && ps5_tv_show_favorites);
             }
-            int count=ps5_tv_visible_count();
-            if(!count)
-                text_center_button(p,ps5_tv_show_favorites?
-                    TR("У вибраному поки немає каналів","No favorite channels yet"):
-                    TR("Каналів не знайдено","No channels found"),
-                    UI_EDGE,271,1216,96,p->font_big,.73f,.77f,.82f);
             /* The web IPTV page uses a search box and compact horizontal
                channel cards, not the old 6x2 square-logo homebrew grid. */
             box_alpha(p,32,158,1216,46,.102f,.137f,.166f,1.f,14);
