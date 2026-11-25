@@ -85,3 +85,25 @@ for name in "${platform_names[@]}"; do
 done
 ''')
 p.write_text(s)
+
+# Make the pinned native converter report every missing import in one pass.
+# Keep conversion fatal: never generate an eboot with unresolved symbols.
+converter = p.parent.parent / "tooling/native/sce_module_writer.cpp"
+source = converter.read_text()
+before = "    for (std::size_t i = 1; i < image.dynamic_symbols.size(); ++i)"
+missing = '        require(provider != nullptr, "no public SDK stub exports required symbol " + symbol.name);'
+after = "    std::vector<ModuleRecord> modules;"
+for hook in (before, missing, after):
+    if source.count(hook) != 1:
+        raise SystemExit("Unexpected native converter import-validation hook: " + hook)
+source = source.replace(before, "    std::string missing_imports;\\n" + before)
+source = source.replace(missing, """        if (provider == nullptr)
+        {
+            missing_imports += "\\n  " + symbol.name;
+            continue;
+        }""")
+source = source.replace(after, """    require(missing_imports.empty(), "Missing PS5 SDK import implementations:" + missing_imports);
+
+""" + after)
+converter.write_text(source)
+
