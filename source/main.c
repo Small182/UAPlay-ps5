@@ -4403,8 +4403,12 @@ int main(void) {
                 if(event->event_id==MPV_EVENT_END_FILE && page==PLAYER){
                     mpv_event_end_file *end=(mpv_event_end_file*)event->data;
                     if(end && end->reason==MPV_END_FILE_REASON_ERROR){
-                        snprintf(message,sizeof(message),"Помилка відео: %s (%d)",
-                                 mpv_error_string(end->error),end->error);
+                        const char *reason=mpv_error_string(end->error);
+#if defined(__PS5__)
+                        const char *native_error=ps5_kitchen_last_error(player);
+                        if(native_error)reason=native_error;
+#endif
+                        snprintf(message,sizeof(message),"Помилка відео: %s (%d)",reason,end->error);
                         page=player_return_page;
                     }else if(end && end->reason==MPV_END_FILE_REASON_EOF){
                         if(player_return_page==EPISODES && active_episode_variant>=0)
@@ -4512,7 +4516,10 @@ int main(void) {
             glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
             }
 #endif
-            if(!video_loaded){
+            if(render_result<0){
+                snprintf(message,sizeof(message),"Помилка відеорендерера: %s",mpv_error_string(render_result));
+                command(player,"stop",NULL);page=player_return_page;
+            }else if(!video_loaded){
                 box(&paint,0,0,1280,720,.035f,.044f,.059f);
                 box_alpha(&paint,35,33,168,53,.10f,.15f,.22f,.95f,14);
                 text(&paint,"‹  Назад",54,44,141);
@@ -4530,9 +4537,6 @@ int main(void) {
                     snprintf(message,sizeof(message),"Час очікування відео вичерпано (30 с)");
                     command(player,"stop",NULL);page=player_return_page;
                 }
-            }else if(render_result<0){
-                snprintf(message,sizeof(message),"Помилка відеорендерера mpv: %s",mpv_error_string(render_result));
-                command(player,"stop",NULL);page=player_return_page;
             }
             #ifdef UAPLAY_PS5_SOFTWARE
             if(video_options[2]!=0){
