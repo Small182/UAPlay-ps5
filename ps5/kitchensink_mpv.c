@@ -38,6 +38,7 @@ struct mpv_handle {
     double volume;
     int error;
     char error_text[256];
+    char diagnostic[160];
     char user_agent[160], referrer[512];
 };
 
@@ -56,7 +57,7 @@ static void video_diagnostic(mpv_handle *p,const char *stage,int detail){
     mkdir(UAPLAY_DATA_ROOT,0777);
     FILE *f=fopen(UAPLAY_DATA_ROOT "/video.log","a");
     if(f){fprintf(f,"[%u] %s (%d)\n",(unsigned)SDL_GetTicks(),stage,detail);fclose(f);}
-    (void)p;
+    if(p)snprintf(p->diagnostic,sizeof(p->diagnostic),"%s (%d)",stage,detail);
 }
 
 static void audio_tick(mpv_handle *p) {
@@ -330,6 +331,7 @@ mpv_event *mpv_wait_event(mpv_handle *p,double timeout) {
             video_diagnostic(p,"Waiting for decoded frame",(int)frames);
             video_diagnostic(p,"Queued video packets",(int)packets);
             video_diagnostic(p,"Decoder state",Kit_GetPlayerState(p->decoder));
+            snprintf(p->diagnostic,sizeof(p->diagnostic),"Decoder: %d | Frames: %u | Packets: %u | Audio: %s",Kit_GetPlayerState(p->decoder),frames,packets,p->audio?"OK":"OFF");
         }
     }
     else if(p->event_stage==3){
@@ -342,6 +344,7 @@ mpv_event *mpv_wait_event(mpv_handle *p,double timeout) {
     }
     return &result;
 }
+const char *ps5_kitchen_diagnostic(mpv_handle *p){return p && p->diagnostic[0]?p->diagnostic:"Waiting for player";}
 const char *ps5_kitchen_last_error(mpv_handle *p){return p && p->error_text[0]?p->error_text:NULL;}
 const char *mpv_error_string(int code) {
     if(code==-2)return "Декодер зупинився до першого кадру";
