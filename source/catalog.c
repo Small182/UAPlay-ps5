@@ -916,6 +916,9 @@ static int uaplay_web_api_origin(char *origin, size_t size) {
     snprintf(origin,size,"%s",value);
     return 1;
 }
+int catalog_web_api_origin(char *origin,size_t size){
+    return uaplay_web_api_origin(origin,size);
+}
 
 /* Cloudflare's /api/title route returns the same TMDB identifier and
  * localized text with renamed metadata fields (seasons/episodes/runtime).
