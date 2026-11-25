@@ -4517,7 +4517,12 @@ int main(void) {
             }
 #endif
             if(render_result<0){
-                snprintf(message,sizeof(message),"Помилка відеорендерера: %s",mpv_error_string(render_result));
+                const char *render_error=mpv_error_string(render_result);
+#ifdef __PS5__
+                const char *native_render_error=ps5_kitchen_last_error(player);
+                if(native_render_error)render_error=native_render_error;
+#endif
+                snprintf(message,sizeof(message),"Помилка відеорендерера: %s",render_error);
                 command(player,"stop",NULL);page=player_return_page;
             }else if(!video_loaded){
                 box(&paint,0,0,1280,720,.035f,.044f,.059f);
