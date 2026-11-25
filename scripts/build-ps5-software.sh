@@ -37,7 +37,18 @@ vlc_work="${VLC_PS5_WORK:-/tmp/uaplay-vlc-work}"
 vlc_upstream="${UAPLAY_VLC_UPSTREAM:-/tmp/uaplay-vlc-upstream}"
 test -s "$vlc_work/static-ps5/static_modules.c"
 cp "$project/ps5/libvlc_mpv.c" "$app/src/libvlc_mpv.c"
-cp "$vlc_work/static-ps5/static_modules.c" "$app/src/vlc_static_modules.c"
+# Extend the cached static registry without rebuilding libVLC.
+sed -e '/^int vlc_entry__ps5http(/a int vlc_entry__ps5vdec(vlc_set_cb, void *);' \
+    -e '/^    vlc_entry__ps5http,/a\    vlc_entry__ps5vdec,' \
+    "$vlc_work/static-ps5/static_modules.c" > "$app/src/vlc_static_modules.c"
+grep -q 'vlc_entry__ps5vdec,' "$app/src/vlc_static_modules.c"
+cp "$vlc_upstream/ps5/modules/ps5vdec.c" "$app/src/vlc_ps5vdec.c"
+sdk="$PS5_NATIVE_TEMPLATE/.deps/native/ps5-payload-sdk"
+mkdir -p "$app/vlc-stubs"
+PS5_PAYLOAD_SDK="$sdk" "$sdk/bin/prospero-clang" -std=c11 -O2 -fPIC -c \
+    "$vlc_upstream/ps5/stubs/videodec2_link_stub.c" -o "$app/vlc-stubs/videodec2.o"
+"$sdk/bin/prospero-lld" --shared -soname libSceVideodec2.prx \
+    -o "$app/vlc-stubs/libSceVideodec2.so" "$app/vlc-stubs/videodec2.o"
 cp "$vlc_upstream/ps5/modules/ps5http.c" "$app/src/vlc_ps5http.c"
 ln -s "$vlc_work/src/vlc-3.0.24/include" "$app/vlc-headers"
 export UAPLAY_VLC_WORK="$vlc_work"
@@ -73,6 +84,7 @@ PY
     make libc
     APP_DEFINITIONS='__PS5__ SDL_MAIN_HANDLED UAPLAY_PS5_SOFTWARE UAPLAY_USE_VLC_COMPAT' \
     APP_INCLUDE_PATHS='vlc-headers' \
+    APP_IMPORT_STUBS='vlc-stubs/libSceVideodec2.so' \
     PACBREW_PACKAGES='sdl2 SDL2_ttf SDL2_image libcurl' \
     bash tools/build.sh Folder
 )

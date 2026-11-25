@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
  * UAPlay native PS5 libVLC adapter. Reuses the catalogue's existing player API.
- * First integration uses CPU video callbacks and SDL output, not Vulkan/HW decode.
+ * Native PS5 hardware video decoder with SDL video output and software fallback.
  */
 #define _POSIX_C_SOURCE 200809L
 #include "../ps5/kitchensink_mpv.h"
@@ -17,6 +17,54 @@
 /* Upstream VLC-PS5 has weak hooks provided by its standalone player.
  * A PS5 title cannot import undefined weak application symbols, so implement
  * these locally. Cancellation is atomic because VLC calls it on worker threads. */
+/* The console fills imported decoder addresses only after loading module 207.
+ * Inspect the actual GOT slots rather than calling unresolved imports. */
+extern int sceSysmoduleLoadModule(uint16_t id);
+extern void vlc_ps5_vdec_prepare(void);
+extern void vlc_ps5_vdec_probe(const char *when);
+static int hw_ready,hw_checked,hw_active,hw_failed;
+#define IMPORT_READY(sym) ({ uintptr_t addr; __asm__ volatile("movq " #sym "@GOTPCREL(%%rip), %0" : "=r"(addr)); addr != 0; })
+int vlc_ps5_vdec_available(void){return __atomic_load_n(&hw_ready,__ATOMIC_ACQUIRE);}
+void vlc_ps5_vdec_active(int on){__atomic_store_n(&hw_active,on,__ATOMIC_RELEASE);}
+void vlc_ps5_vdec_failed(void){__atomic_store_n(&hw_failed,1,__ATOMIC_RELEASE);}
+void ps5_vlc_hw_init(void){
+    if(hw_checked)return;
+    hw_checked=1;
+    if(!IMPORT_READY(sceSysmoduleLoadModule))return;
+    int rc=sceSysmoduleLoadModule(207);
+    if(rc!=0) {fprintf(stderr,"UAPlay: Videodec2 load %#x\n",(unsigned)rc);}
+    if(!IMPORT_READY(sceVideodec2QueryComputeMemoryInfo) ||
+       !IMPORT_READY(sceVideodec2AllocateComputeQueue) ||
+       !IMPORT_READY(sceVideodec2QueryDecoderMemoryInfo) ||
+       !IMPORT_READY(sceVideodec2CreateDecoder) ||
+       !IMPORT_READY(sceVideodec2DeleteDecoder) ||
+       !IMPORT_READY(sceVideodec2Decode) ||
+       !IMPORT_READY(sceVideodec2Flush) ||
+       !IMPORT_READY(sceVideodec2Reset) ||
+       !IMPORT_READY(sceVideodec2GetPictureInfo)){
+        fprintf(stderr,"UAPlay: Videodec2 unavailable; software decode\n");
+        return;
+    }
+    vlc_ps5_vdec_prepare();
+    vlc_ps5_vdec_probe("UAPlay sandbox");
+    __atomic_store_n(&hw_ready,1,__ATOMIC_RELEASE);
+}
+void vlc_ps5_copy_plane_shift(uint8_t *dst,size_t dp,const uint8_t *src,size_t sp,
+                             size_t bytes,unsigned rows,unsigned shift){
+    for(unsigned y=0;y<rows;y++,dst+=dp,src+=sp){
+        if(!shift)memcpy(dst,src,bytes);
+        else for(size_t i=0;i<bytes/2;i++)
+            ((uint16_t*)dst)[i]=(uint16_t)(((const uint16_t*)src)[i]<<shift);
+    }
+}
+void vlc_ps5_split_plane16(uint8_t *u,size_t up,uint8_t *v,size_t vp,
+                           const uint8_t *src,size_t sp,size_t bytes,unsigned rows){
+    for(unsigned y=0;y<rows;y++,u+=up,v+=vp,src+=sp)
+        for(size_t i=0;i<bytes/4;i++){
+            ((uint16_t*)u)[i]=((const uint16_t*)src)[2*i];
+            ((uint16_t*)v)[i]=((const uint16_t*)src)[2*i+1];
+        }
+}
 static long next_open_serial;
 static long cancelled_serial;
 int vlc_ps5_stream_cancelled(long serial){
@@ -43,6 +91,8 @@ struct mpv_handle {
     unsigned width,height,pitch,serial,decoded,generation;
     int active,started,loaded,volume;
     long open_serial;
+    int software_retry;
+    libvlc_time_t resume_at;
     char ua[160],referer[512],error[256],diag[160];
 };
 struct mpv_render_context {
@@ -68,7 +118,7 @@ static unsigned video_setup(void **opaque,char *chroma,unsigned *w,unsigned *h,
     if(posix_memalign((void**)&p->frame,64,(size_t)*pitch**lines)!=0)p->frame=NULL;
     p->width=*w;p->height=*h;p->pitch=*pitch;
     p->serial=p->decoded=0;
-    snprintf(p->diag,sizeof(p->diag),"VLC video %ux%u",*w,*h);
+    snprintf(p->diag,sizeof(p->diag),"VLC %s %ux%u",__atomic_load_n(&hw_active,__ATOMIC_ACQUIRE)?"HW":"SW",*w,*h);
     SDL_UnlockMutex(p->lock);
     return p->frame?1:0;
 }
@@ -122,6 +172,8 @@ static void stop(mpv_handle *p){
     if(p->mp)libvlc_media_player_stop(p->mp);
     if(p->audio)SDL_ClearQueuedAudio(p->audio);
     p->loaded=p->started=0;
+    __atomic_store_n(&hw_active,0,__ATOMIC_RELEASE);
+    __atomic_store_n(&hw_failed,0,__ATOMIC_RELEASE);
     p->generation++;
 }
 mpv_handle *mpv_create(void){
@@ -131,7 +183,8 @@ mpv_handle *mpv_create(void){
     if(!p->lock){free(p);return NULL;}return p;
 }
 int mpv_initialize(mpv_handle *p){
-    const char *args[]={"--no-video-title-show","--no-osd","--no-plugins-cache",
+    ps5_vlc_hw_init();
+    const char *args[]={"--ps5vdec","--no-video-title-show","--no-osd","--no-plugins-cache",
         "--avcodec-hw=none","--network-caching=2000","--verbose=-1"};
     if(!p)return -1;
     p->vlc=libvlc_new(sizeof(args)/sizeof(args[0]),args);
@@ -177,7 +230,7 @@ int mpv_get_property(mpv_handle *p,const char *n,mpv_format f,void *out){
 int mpv_command_async(mpv_handle *p,unsigned long long userdata,const char **a){
     (void)userdata;if(!p||!p->mp||!a||!a[0])return -1;
     if(!strcmp(a[0],"loadfile")&&a[1]){
-        stop(p);p->error[0]=0;
+        stop(p);p->error[0]=0;p->software_retry=0;p->resume_at=0;
         libvlc_media_t *m=strstr(a[1],"://")?libvlc_media_new_location(p->vlc,a[1]):libvlc_media_new_path(p->vlc,a[1]);
         if(!m){snprintf(p->error,sizeof(p->error),"libVLC: unable to create media");return -1;}
         char opt[600];
@@ -207,7 +260,40 @@ int mpv_command_async(mpv_handle *p,unsigned long long userdata,const char **a){
 mpv_event *mpv_wait_event(mpv_handle *p,double timeout){
     (void)timeout;static mpv_event e;static mpv_event_end_file end;
     e.event_id=MPV_EVENT_NONE;e.data=NULL;if(!p||!p->active)return &e;
+    if(__atomic_exchange_n(&hw_failed,0,__ATOMIC_ACQ_REL) && !p->software_retry){
+        libvlc_media_t *old=libvlc_media_player_get_media(p->mp);
+        char *url=old?libvlc_media_get_mrl(old):NULL;
+        libvlc_time_t pos=libvlc_media_player_get_time(p->mp);
+        if(url){
+            stop(p);
+            p->software_retry=1;
+            p->resume_at=pos>0?pos:0;
+            libvlc_media_t *m=libvlc_media_new_location(p->vlc,url);
+            libvlc_free(url);
+            if(m){
+                libvlc_media_add_option_flag(m,":no-ps5vdec",libvlc_media_option_trusted);
+                char opt[600];
+                p->open_serial=__atomic_add_fetch(&next_open_serial,1,__ATOMIC_RELAXED);
+                snprintf(opt,sizeof(opt),":ps5http-serial=%ld",p->open_serial);
+                libvlc_media_add_option(m,opt);
+                if(p->ua[0]){snprintf(opt,sizeof(opt),":http-user-agent=%s",p->ua);libvlc_media_add_option(m,opt);}
+                if(p->referer[0]){snprintf(opt,sizeof(opt),":http-referrer=%s",p->referer);libvlc_media_add_option(m,opt);}
+                libvlc_media_player_set_media(p->mp,m);libvlc_media_release(m);
+                p->active=1;
+                snprintf(p->diag,sizeof(p->diag),"VLC hardware failed; software retry");
+                if(p->audio)SDL_PauseAudioDevice(p->audio,0);
+                if(libvlc_media_player_play(p->mp)==0)return &e;
+            }
+            p->active=0;
+            snprintf(p->error,sizeof(p->error),"VLC software fallback failed");
+            end.reason=MPV_END_FILE_REASON_ERROR;end.error=-1;
+            e.event_id=MPV_EVENT_END_FILE;e.data=&end;return &e;
+        }
+    }
     libvlc_state_t s=libvlc_media_player_get_state(p->mp);
+    if(p->resume_at>0&&s==libvlc_Playing&&libvlc_media_player_is_seekable(p->mp)){
+        libvlc_media_player_set_time(p->mp,p->resume_at);p->resume_at=0;
+    }
     if(!p->started){p->started=1;e.event_id=MPV_EVENT_START_FILE;return &e;}
     if(s==libvlc_Error||s==libvlc_Ended){
         if(s==libvlc_Error && !p->error[0])snprintf(p->error,sizeof(p->error),"libVLC media player error");
