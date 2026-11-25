@@ -96,13 +96,32 @@ static void vlc_console_log(void *opaque,int level,const libvlc_log_t *ctx,const
     char line[256];vsnprintf(line,sizeof(line),fmt,args);
     fprintf(stderr,"VLC: %s\n",line);
 }
+/* Native PS5 audio output (same PCM format and grain as upstream VLC). */
+extern int sceAudioOutInit(void);
+extern int sceAudioOutOpen(int32_t user,int32_t type,int32_t index,uint32_t len,uint32_t freq,uint32_t param);
+extern int sceAudioOutOutput(int32_t handle,const void *buf);
+extern int sceAudioOutClose(int32_t handle);
+extern void *vlc_ps5_big_alloc(size_t bytes);
+extern int vlc_ps5_big_free(void *ptr);
+#define AUDIO_RATE 48000u
+#define AUDIO_GRAIN 256u
+#define AUDIO_CAP (4u*AUDIO_RATE)
 struct mpv_handle {
     libvlc_instance_t *vlc;
     libvlc_media_player_t *mp;
     SDL_mutex *lock;
-    SDL_AudioDeviceID audio;
-    unsigned char *frame;
-    unsigned width,height,pitch,serial,decoded,generation;
+    SDL_mutex *audio_lock;
+    SDL_Thread *audio_thread;
+    int audio_port,audio_running,audio_paused,audio_gain;
+    int16_t *pcm;
+    unsigned audio_head,audio_count,audio_packets;
+    int64_t audio_pts;
+    unsigned char *frame,*ready_frame;
+    size_t frame_size,offsets[3];
+    unsigned width,height,pitches[3],lines[3],serial,decoded,generation;
+    unsigned ten_bit,two_planes,full_range,p010;
+    Uint32 playing_since;
+    char chroma[5];
     int active,started,loaded,volume;
     long open_serial;
     int software_retry;
@@ -113,67 +132,164 @@ struct mpv_render_context {
     mpv_handle *p;
     SDL_Texture *texture;
     unsigned width,height,serial,generation;
+    uint32_t *rgb;
+    size_t rgb_capacity;
 };
 
-static unsigned video_setup(void **opaque,char *chroma,unsigned *w,unsigned *h,
-                            unsigned *pitch,unsigned *lines) {
-    mpv_handle *p=*opaque;
-    if(!*w || !*h)return 0;
-    if(*w>1280 || *h>720){
-        double scale=fmin(1280.0/(*w),720.0/(*h));
-        *w=(unsigned)(*w*scale);*h=(unsigned)(*h*scale);
-    }
-    if(!*w || !*h)return 0;
-    memcpy(chroma,"RV32",4);
-    *pitch=(*w*4+63)&~63u;*lines=(*h+15)&~15u;
-    SDL_LockMutex(p->lock);
-    free(p->frame);
-    p->frame=NULL;
-    if(posix_memalign((void**)&p->frame,64,(size_t)*pitch**lines)!=0)p->frame=NULL;
-    p->width=*w;p->height=*h;p->pitch=*pitch;
+static void frame_free(void *ptr){
+    if(ptr&&!vlc_ps5_big_free(ptr))free(ptr);
+}
+static void *frame_alloc(size_t size){
+    void *ptr=size>=(4u<<20)?vlc_ps5_big_alloc(size):NULL;
+    if(!ptr&&posix_memalign(&ptr,64,size)!=0)ptr=NULL;
+    return ptr;
+}
+static void video_buffers_free(mpv_handle *p){
+    frame_free(p->frame);frame_free(p->ready_frame);
+    p->frame=p->ready_frame=NULL;p->frame_size=0;
     p->serial=p->decoded=0;
-    snprintf(p->diag,sizeof(p->diag),"VLC %s %ux%u",__atomic_load_n(&hw_active,__ATOMIC_ACQUIRE)?"HW":"SW",*w,*h);
+}
+static unsigned video_setup(void **opaque,char *chroma,unsigned *w,unsigned *h,
+                            unsigned *pitch,unsigned *lines){
+    mpv_handle *p=*opaque;
+    if(!*w||!*h||*w>4096||*h>2304)return 0;
+    unsigned nv12=!memcmp(chroma,"NV12",4),p010=!memcmp(chroma,"P010",4);
+    unsigned ten=p010||!memcmp(chroma,"I0A",3)||!memcmp(chroma,"I2A",3)||!memcmp(chroma,"I4A",3);
+    unsigned two=nv12||p010,full=!memcmp(chroma,"J4",2);
+    memcpy(chroma,two?(ten?"P010":"NV12"):ten?"I0AL":full?"J420":"I420",4);
+    unsigned bpp=ten?2:1,cw=(*w+1)/2,ch=(*h+1)/2;
+    SDL_LockMutex(p->lock);
+    video_buffers_free(p);
+    p->width=*w;p->height=*h;p->ten_bit=ten;p->two_planes=two;
+    p->full_range=full;p->p010=two&&ten;
+    memcpy(p->chroma,chroma,4);p->chroma[4]=0;
+    pitch[0]=(*w*bpp+255)&~255u;lines[0]=(*h+15)&~15u;
+    pitch[1]=(cw*bpp*(two?2:1)+255)&~255u;lines[1]=(ch+15)&~15u;
+    pitch[2]=two?0:pitch[1];lines[2]=two?0:lines[1];
+    size_t size=0;
+    for(unsigned i=0;i<3;i++){
+        p->pitches[i]=pitch[i];p->lines[i]=lines[i];p->offsets[i]=size;
+        size+=(size_t)pitch[i]*lines[i];
+    }
+    p->frame_size=size;
+    p->frame=frame_alloc(size);p->ready_frame=frame_alloc(size);
+    int ok=p->frame&&p->ready_frame;
+    if(!ok)video_buffers_free(p);
+    p->generation++;
+    snprintf(p->diag,sizeof(p->diag),"VLC %s %.4s %ux%u%s",
+             __atomic_load_n(&hw_active,__ATOMIC_ACQUIRE)?"HW":"SW",chroma,*w,*h,ok?"":" alloc failed");
+    if(!ok)snprintf(p->error,sizeof(p->error),"VLC video buffer allocation failed");
     SDL_UnlockMutex(p->lock);
-    return p->frame?1:0;
+    return ok?1:0;
 }
 static void video_cleanup(void *opaque){
-    mpv_handle *p=opaque;
-    SDL_LockMutex(p->lock);
-    free(p->frame);p->frame=NULL;p->serial=p->decoded=0;
-    SDL_UnlockMutex(p->lock);
+    mpv_handle *p=opaque;SDL_LockMutex(p->lock);
+    video_buffers_free(p);p->generation++;SDL_UnlockMutex(p->lock);
 }
 static void *video_lock(void *opaque,void **planes){
     mpv_handle *p=opaque;
     SDL_LockMutex(p->lock);
-    *planes=p->frame;
+    for(unsigned i=0;i<(p->two_planes?2u:3u);i++)planes[i]=p->frame+p->offsets[i];
     return p;
 }
 static void video_unlock(void *opaque,void *picture,void *const *planes){
-    (void)picture;(void)planes;
-    mpv_handle *p=opaque;
-    p->decoded++;
+    (void)picture;(void)planes;mpv_handle *p=opaque;
+    if(p->frame&&p->ready_frame){memcpy(p->ready_frame,p->frame,p->frame_size);p->decoded++;}
     SDL_UnlockMutex(p->lock);
 }
 static void video_display(void *opaque,void *picture){
     (void)picture;mpv_handle *p=opaque;
     SDL_LockMutex(p->lock);p->serial=p->decoded;SDL_UnlockMutex(p->lock);
 }
+static void audio_clear(mpv_handle *p){
+    if(!p->audio_lock)return;
+    SDL_LockMutex(p->audio_lock);p->audio_head=p->audio_count=0;p->audio_pts=0;
+    SDL_UnlockMutex(p->audio_lock);
+}
+static int audio_setup(void **opaque,char *format,unsigned *rate,unsigned *channels){
+    mpv_handle *p=*opaque;
+    memcpy(format,"S16N",4);*rate=AUDIO_RATE;*channels=2;
+    audio_clear(p);return 0;
+}
 static void audio_play(void *opaque,const void *samples,unsigned count,int64_t pts){
-    (void)pts;
     mpv_handle *p=opaque;
-    if(p->audio && SDL_GetQueuedAudioSize(p->audio)<192000)
-        SDL_QueueAudio(p->audio,samples,count*4);
+    if(!p->pcm||!p->audio_lock||!samples)return;
+    const int16_t *src=samples;
+    if(count>AUDIO_CAP){src+=(size_t)(count-AUDIO_CAP)*2;pts+=(int64_t)(count-AUDIO_CAP)*1000000/AUDIO_RATE;count=AUDIO_CAP;}
+    SDL_LockMutex(p->audio_lock);
+    if(p->audio_count&&p->audio_count+count>AUDIO_CAP){
+        unsigned skip=p->audio_count+count-AUDIO_CAP;
+        p->audio_head=(p->audio_head+skip)%AUDIO_CAP;p->audio_count-=skip;
+        p->audio_pts+=(int64_t)skip*1000000/AUDIO_RATE;
+    }
+    if(!p->audio_count)p->audio_pts=pts;
+    unsigned tail=(p->audio_head+p->audio_count)%AUDIO_CAP;
+    unsigned first=count<AUDIO_CAP-tail?count:AUDIO_CAP-tail;
+    memcpy(p->pcm+(size_t)tail*2,src,(size_t)first*4);
+    memcpy(p->pcm,src+(size_t)first*2,(size_t)(count-first)*4);
+    p->audio_count+=count;p->audio_packets++;
+    SDL_UnlockMutex(p->audio_lock);
 }
 static void audio_pause(void *opaque,int64_t pts){
-    (void)pts;mpv_handle *p=opaque;if(p->audio)SDL_PauseAudioDevice(p->audio,1);
+    (void)pts;mpv_handle *p=opaque;SDL_LockMutex(p->audio_lock);p->audio_paused=1;SDL_UnlockMutex(p->audio_lock);
 }
 static void audio_resume(void *opaque,int64_t pts){
-    (void)pts;mpv_handle *p=opaque;if(p->audio)SDL_PauseAudioDevice(p->audio,0);
+    (void)pts;mpv_handle *p=opaque;SDL_LockMutex(p->audio_lock);p->audio_paused=0;SDL_UnlockMutex(p->audio_lock);
 }
-static void audio_flush(void *opaque,int64_t pts){
-    (void)pts;mpv_handle *p=opaque;if(p->audio)SDL_ClearQueuedAudio(p->audio);
-}
+static void audio_flush(void *opaque,int64_t pts){(void)pts;audio_clear(opaque);}
 static void audio_drain(void *opaque){(void)opaque;}
+static void audio_volume(void *opaque,float volume,bool mute){
+    mpv_handle *p=opaque;
+    int gain=mute?0:(int)(volume*100.0f);
+    if(gain<0)gain=0;if(gain>200)gain=200;
+    __atomic_store_n(&p->audio_gain,gain,__ATOMIC_RELEASE);
+}
+static int audio_worker(void *opaque){
+    mpv_handle *p=opaque;
+    int16_t output[AUDIO_GRAIN*2];
+    while(__atomic_load_n(&p->audio_running,__ATOMIC_ACQUIRE)){
+        memset(output,0,sizeof(output));
+        SDL_LockMutex(p->audio_lock);
+        unsigned at=0;
+        if(!p->audio_paused&&p->audio_count){
+            int64_t now=libvlc_clock()+2LL*AUDIO_GRAIN*1000000/AUDIO_RATE;
+            int64_t delta=p->audio_pts-now;
+            if(delta>15000){
+                int64_t wait=delta*AUDIO_RATE/1000000;
+                at=wait>AUDIO_GRAIN?AUDIO_GRAIN:(unsigned)wait;
+            }else if(delta<-60000){
+                int64_t late=(-delta)*AUDIO_RATE/1000000;
+                unsigned skip=late>p->audio_count?p->audio_count:(unsigned)late;
+                p->audio_head=(p->audio_head+skip)%AUDIO_CAP;p->audio_count-=skip;
+                p->audio_pts+=(int64_t)skip*1000000/AUDIO_RATE;
+            }
+            int gain=__atomic_load_n(&p->audio_gain,__ATOMIC_ACQUIRE);
+            unsigned n=p->audio_count<AUDIO_GRAIN-at?p->audio_count:AUDIO_GRAIN-at;
+            for(unsigned i=0;i<n;i++){
+                unsigned j=(p->audio_head+i)%AUDIO_CAP;
+                for(unsigned ch=0;ch<2;ch++){
+                    int v=p->pcm[(size_t)j*2+ch]*gain/100;
+                    output[(at+i)*2+ch]=(int16_t)(v>32767?32767:v<-32768?-32768:v);
+                }
+            }
+            p->audio_head=(p->audio_head+n)%AUDIO_CAP;p->audio_count-=n;
+            p->audio_pts+=(int64_t)n*1000000/AUDIO_RATE;
+        }
+        SDL_UnlockMutex(p->audio_lock);
+        if(sceAudioOutOutput(p->audio_port,output)<0)SDL_Delay(5);
+    }
+    return 0;
+}
+static void audio_start(mpv_handle *p){
+    p->pcm=malloc((size_t)AUDIO_CAP*4);
+    if(!p->pcm)return;
+    sceAudioOutInit();
+    p->audio_port=sceAudioOutOpen(0xff,0,0,AUDIO_GRAIN,AUDIO_RATE,1);
+    if(p->audio_port<0){init_status("sceAudioOutOpen failed",NULL);return;}
+    __atomic_store_n(&p->audio_running,1,__ATOMIC_RELEASE);
+    p->audio_thread=SDL_CreateThread(audio_worker,"vlc-pcm",p);
+    if(!p->audio_thread)__atomic_store_n(&p->audio_running,0,__ATOMIC_RELEASE);
+}
 static void stop(mpv_handle *p){
     p->active=0;
     if(p->open_serial>0){
@@ -184,7 +300,8 @@ static void stop(mpv_handle *p){
         p->open_serial=0;
     }
     if(p->mp)libvlc_media_player_stop(p->mp);
-    if(p->audio)SDL_ClearQueuedAudio(p->audio);
+    audio_clear(p);
+    p->playing_since=0;
     p->loaded=p->started=0;
     __atomic_store_n(&hw_active,0,__ATOMIC_RELEASE);
     __atomic_store_n(&hw_failed,0,__ATOMIC_RELEASE);
@@ -193,8 +310,11 @@ static void stop(mpv_handle *p){
 mpv_handle *mpv_create(void){
     mpv_handle *p=calloc(1,sizeof(*p));
     if(!p){init_status("calloc","out of memory");return NULL;}
-    p->lock=SDL_CreateMutex();p->volume=100;
-    if(!p->lock){init_status("SDL_CreateMutex",SDL_GetError());free(p);return NULL;}return p;
+    p->lock=SDL_CreateMutex();p->audio_lock=SDL_CreateMutex();
+    p->volume=p->audio_gain=100;p->audio_port=-1;
+    if(!p->lock||!p->audio_lock){init_status("SDL_CreateMutex",SDL_GetError());
+        if(p->lock)SDL_DestroyMutex(p->lock);if(p->audio_lock)SDL_DestroyMutex(p->audio_lock);
+        free(p);return NULL;}return p;
 }
 int mpv_initialize(mpv_handle *p){
     if(!p){init_status("initialize","null handle");return -1;}
@@ -234,19 +354,17 @@ int mpv_initialize(mpv_handle *p){
     if(!p->mp){init_status("libvlc_media_player_new failed",libvlc_errmsg());return -1;}
     libvlc_video_set_callbacks(p->mp,video_lock,video_unlock,video_display,p);
     libvlc_video_set_format_callbacks(p->mp,video_setup,video_cleanup);
-    SDL_AudioSpec spec={0};
-    spec.freq=48000;spec.format=AUDIO_S16SYS;spec.channels=2;spec.samples=1024;
-    p->audio=SDL_OpenAudioDevice(NULL,0,&spec,NULL,0);
-    if(p->audio)SDL_PauseAudioDevice(p->audio,0);
     libvlc_audio_set_callbacks(p->mp,audio_play,audio_pause,audio_resume,audio_flush,audio_drain,p);
-    libvlc_audio_set_format(p->mp,"S16N",48000,2);
+    libvlc_audio_set_format_callbacks(p->mp,audio_setup,NULL);
+    libvlc_audio_set_volume_callback(p->mp,audio_volume);
+    audio_start(p);
     snprintf(p->diag,sizeof(p->diag),"libVLC %s",libvlc_get_version());
     init_status("ready",p->diag);
     return 0;
 }
 int mpv_set_option_string(mpv_handle *p,const char *n,const char *v){(void)p;(void)n;(void)v;return 0;}
 int ps5_kitchen_set_volume(mpv_handle *p,double v){
-    if(!p||!p->mp)return 0;p->volume=(int)v;return libvlc_audio_set_volume(p->mp,p->volume)==0;
+    if(!p||!p->mp)return 0;p->volume=(int)v;__atomic_store_n(&p->audio_gain,p->volume,__ATOMIC_RELEASE);return 1;
 }
 int mpv_set_property_string(mpv_handle *p,const char *n,const char *v){
     if(!p||!p->mp||!n||!v)return -1;
@@ -283,7 +401,7 @@ int mpv_command_async(mpv_handle *p,unsigned long long userdata,const char **a){
         if(p->referer[0]){snprintf(opt,sizeof(opt),":http-referrer=%s",p->referer);libvlc_media_add_option(m,opt);}
         libvlc_media_player_set_media(p->mp,m);libvlc_media_release(m);
         p->active=1;snprintf(p->diag,sizeof(p->diag),"VLC opening");
-        if(p->audio)SDL_PauseAudioDevice(p->audio,0);
+        audio_resume(p,0);
         int rc=libvlc_media_player_play(p->mp);
         if(rc<0)snprintf(p->error,sizeof(p->error),"libVLC: %s",libvlc_errmsg()?libvlc_errmsg():"unable to start playback");
         return rc;
@@ -323,7 +441,7 @@ mpv_event *mpv_wait_event(mpv_handle *p,double timeout){
                 libvlc_media_player_set_media(p->mp,m);libvlc_media_release(m);
                 p->active=1;
                 snprintf(p->diag,sizeof(p->diag),"VLC hardware failed; software retry");
-                if(p->audio)SDL_PauseAudioDevice(p->audio,0);
+                audio_resume(p,0);
                 if(libvlc_media_player_play(p->mp)==0)return &e;
             }
             p->active=0;
@@ -344,7 +462,11 @@ mpv_event *mpv_wait_event(mpv_handle *p,double timeout){
     }
     if(!p->loaded){
         SDL_LockMutex(p->lock);unsigned frames=p->serial;SDL_UnlockMutex(p->lock);
-        if(frames||(s==libvlc_Playing&&libvlc_video_get_track_count(p->mp)==0)){
+        if(s==libvlc_Playing&&!p->playing_since)p->playing_since=SDL_GetTicks();
+        if(!frames&&p->playing_since&&SDL_GetTicks()-p->playing_since>8000 &&
+           __atomic_load_n(&hw_active,__ATOMIC_ACQUIRE)&&!p->software_retry)
+            __atomic_store_n(&hw_failed,1,__ATOMIC_RELEASE);
+        if(frames){
             p->loaded=1;e.event_id=MPV_EVENT_FILE_LOADED;
         }
     }
@@ -356,25 +478,79 @@ const char *ps5_kitchen_last_error(mpv_handle *p){return p?(p->error[0]?p->error
 const char *ps5_kitchen_diagnostic(mpv_handle *p){return p?p->diag:"VLC not initialized";}
 void mpv_terminate_destroy(mpv_handle *p){
     if(!p)return;stop(p);if(p->mp)libvlc_media_player_release(p->mp);
-    if(p->vlc)libvlc_release(p->vlc);if(p->audio)SDL_CloseAudioDevice(p->audio);
-    free(p->frame);SDL_DestroyMutex(p->lock);free(p);
+    if(p->vlc)libvlc_release(p->vlc);
+    __atomic_store_n(&p->audio_running,0,__ATOMIC_RELEASE);
+    if(p->audio_thread)SDL_WaitThread(p->audio_thread,NULL);
+    if(p->audio_port>=0)sceAudioOutClose(p->audio_port);
+    free(p->pcm);video_buffers_free(p);SDL_DestroyMutex(p->audio_lock);SDL_DestroyMutex(p->lock);free(p);
 }
 int mpv_render_context_create(mpv_render_context **out,mpv_handle *p,const mpv_render_param *args){
     (void)args;if(!out||!p){init_status("render context","invalid arguments");return -1;}
     *out=calloc(1,sizeof(**out));if(!*out){init_status("render context","out of memory");return -1;}(*out)->p=p;return 0;
 }
+static unsigned clip8(int v){return v<0?0u:v>255?255u:(unsigned)v;}
+static unsigned sample8(const unsigned char *row,unsigned x,int ten,int p010){
+    if(!ten)return row[x];
+    unsigned v=((const uint16_t*)row)[x];
+    return p010?v>>8:v>>2;
+}
+static void convert_yuv(mpv_handle *p,uint32_t *rgb,unsigned ow,unsigned oh){
+    const unsigned char *y=p->ready_frame,*u=y+p->offsets[1],*v=y+p->offsets[2];
+    for(unsigned row=0;row<oh;row++){
+        unsigned sy=(uint64_t)row*p->height/oh;
+        const unsigned char *yr=y+(size_t)sy*p->pitches[0];
+        const unsigned char *ur=u+(size_t)(sy/2)*p->pitches[1];
+        const unsigned char *vr=v+(size_t)(sy/2)*p->pitches[2];
+        for(unsigned col=0;col<ow;col++){
+            unsigned sx=(uint64_t)col*p->width/ow,cx=sx/2;
+            int yy=(int)sample8(yr,sx,p->ten_bit,p->p010);
+            int uu=(int)sample8(ur,p->two_planes?cx*2:cx,p->ten_bit,p->p010)-128;
+            int vv=(int)sample8(p->two_planes?ur:vr,p->two_planes?cx*2+1:cx,p->ten_bit,p->p010)-128;
+            int base=p->full_range?256*yy:298*(yy-16);
+            int r=(base+(p->full_range?403:459)*vv+128)>>8;
+            int g=(base-(p->full_range?48:55)*uu-(p->full_range?120:136)*vv+128)>>8;
+            int b=(base+(p->full_range?475:541)*uu+128)>>8;
+            rgb[(size_t)row*ow+col]=0xff000000u|(clip8(r)<<16)|(clip8(g)<<8)|clip8(b);
+        }
+    }
+}
 int mpv_render_context_render(mpv_render_context *c,const mpv_render_param *args){
     (void)args;if(!c||!ui_renderer)return -1;mpv_handle *p=c->p;
     SDL_SetRenderDrawColor(ui_renderer,0,0,0,255);SDL_RenderClear(ui_renderer);
-    if(c->generation!=p->generation){if(c->texture)SDL_DestroyTexture(c->texture);c->texture=NULL;c->serial=0;c->generation=p->generation;}
     SDL_LockMutex(p->lock);
-    if(p->frame&&p->serial&&p->serial!=c->serial){
-        SDL_Surface *surface=SDL_CreateRGBSurfaceWithFormatFrom(p->frame,p->width,p->height,32,p->pitch,SDL_PIXELFORMAT_RGB888);
-        SDL_Texture *next=surface?SDL_CreateTextureFromSurface(ui_renderer,surface):NULL;
-        if(surface)SDL_FreeSurface(surface);
-        if(!next){snprintf(p->error,sizeof(p->error),"VLC SDL texture: %s",SDL_GetError());SDL_UnlockMutex(p->lock);return -1;}
-        if(c->texture)SDL_DestroyTexture(c->texture);
-        c->texture=next;c->serial=p->serial;c->width=p->width;c->height=p->height;
+    if(c->generation!=p->generation){if(c->texture)SDL_DestroyTexture(c->texture);c->texture=NULL;c->serial=0;c->generation=p->generation;}
+    if(p->ready_frame&&p->serial&&p->serial!=c->serial){
+        double scale=fmin(1.0,fmin(1280.0/p->width,720.0/p->height));
+        unsigned w=(unsigned)(p->width*scale),h=(unsigned)(p->height*scale);
+        if(!w||!h){SDL_UnlockMutex(p->lock);return -1;}
+        size_t pixels=(size_t)w*h;
+        if(c->rgb_capacity<pixels){
+            uint32_t *next=realloc(c->rgb,pixels*sizeof(*next));
+            if(!next){snprintf(p->error,sizeof(p->error),"VLC RGB buffer allocation failed");SDL_UnlockMutex(p->lock);return -1;}
+            c->rgb=next;c->rgb_capacity=pixels;
+        }
+        convert_yuv(p,c->rgb,w,h);
+        if(!c->texture||c->width!=w||c->height!=h){
+            if(c->texture)SDL_DestroyTexture(c->texture);
+            c->texture=SDL_CreateTexture(ui_renderer,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_STREAMING,w,h);
+            c->width=w;c->height=h;
+        }
+        if(c->texture&&SDL_UpdateTexture(c->texture,NULL,c->rgb,w*4)<0){
+            SDL_DestroyTexture(c->texture);c->texture=NULL;
+        }
+        if(!c->texture){
+            SDL_Surface *surface=SDL_CreateRGBSurfaceWithFormatFrom(c->rgb,w,h,32,w*4,SDL_PIXELFORMAT_ARGB8888);
+            if(surface){SDL_SetSurfaceBlendMode(surface,SDL_BLENDMODE_NONE);c->texture=SDL_CreateTextureFromSurface(ui_renderer,surface);SDL_FreeSurface(surface);}
+        }
+        if(!c->texture){snprintf(p->error,sizeof(p->error),"VLC SDL texture: %s",SDL_GetError());SDL_UnlockMutex(p->lock);return -1;}
+        SDL_SetTextureBlendMode(c->texture,SDL_BLENDMODE_NONE);
+        c->serial=p->serial;
+        if(c->serial==1){
+            unsigned luma=p->ready_frame[0];
+            snprintf(p->diag,sizeof(p->diag),"VLC %s %.4s %ux%u -> %ux%u Y=%u",
+                __atomic_load_n(&hw_active,__ATOMIC_ACQUIRE)?"HW":"SW",p->chroma,p->width,p->height,w,h,luma);
+            init_status("first picture",p->diag);
+        }
     }
     SDL_UnlockMutex(p->lock);
     if(!c->texture)return 0;
@@ -382,7 +558,7 @@ int mpv_render_context_render(mpv_render_context *c,const mpv_render_param *args
     SDL_Rect dst={0,0,(int)(c->width*scale),(int)(c->height*scale)};dst.x=(1280-dst.w)/2;dst.y=(720-dst.h)/2;
     return SDL_RenderCopy(ui_renderer,c->texture,NULL,&dst);
 }
-void mpv_render_context_free(mpv_render_context *c){if(c){if(c->texture)SDL_DestroyTexture(c->texture);free(c);}}
+void mpv_render_context_free(mpv_render_context *c){if(c){if(c->texture)SDL_DestroyTexture(c->texture);free(c->rgb);free(c);}}
 int ps5_kitchen_tracks(mpv_handle *p,int subtitles,MediaTrack *out,int max){
     if(!p||!p->mp||!out)return 0;
     libvlc_track_description_t *head=subtitles?libvlc_video_get_spu_description(p->mp):libvlc_audio_get_track_description(p->mp);
