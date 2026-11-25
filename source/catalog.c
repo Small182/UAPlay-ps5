@@ -991,7 +991,7 @@ static int uaplay_web_api_catalog(const char *category,const char *query,
         snprintf(url,sizeof(url),"%s/api/search?q=%s&page=%d",origin,encoded,page);
         free(encoded);
     }else{
-        const char *sort=sort_mode==1?"rating":sort_mode==2?"newest":"popularity";
+        const char *sort=sort_mode==1?"rating":sort_mode==2?"newest":sort_mode==3?"oldest":"popularity";
         snprintf(url,sizeof(url),"%s/api/catalog?section=%s&page=%d&sort=%s",
                  origin,section,page,sort);
     }
@@ -1111,7 +1111,7 @@ int catalog_load_page_sorted(const char *category, const char *query, int page,
     const char *language=tmdb_language(ui_language());
     char url[1800];
     char today[16]={0};
-    if(sort_mode==2){
+    if(sort_mode==2 || sort_mode==3){
         time_t now=time(NULL);
         struct tm *calendar=localtime(&now);
         if(calendar)strftime(today,sizeof(today),"%Y-%m-%d",calendar);
@@ -1119,9 +1119,9 @@ int catalog_load_page_sorted(const char *category, const char *query, int page,
     int searching=query && *query;
     char *q = searching ? encode(query) : NULL;
     const char *movie_sort=sort_mode==1?"vote_average.desc":
-                           sort_mode==2?"primary_release_date.desc":"popularity.desc";
+                           sort_mode==2?"primary_release_date.desc":sort_mode==3?"primary_release_date.asc":"popularity.desc";
     const char *tv_sort=sort_mode==1?"vote_average.desc":
-                        sort_mode==2?"first_air_date.desc":"popularity.desc";
+                        sort_mode==2?"first_air_date.desc":sort_mode==3?"first_air_date.asc":"popularity.desc";
     const char *rating_filter=sort_mode==1?"&vote_count.gte=100":"";
     if (q) {
         snprintf(url, sizeof(url), "https://api.themoviedb.org/3/search/multi?api_key=%s&language=%s&include_adult=false&query=%s", key, language, q);
@@ -1147,7 +1147,7 @@ int catalog_load_page_sorted(const char *category, const char *query, int page,
     free(q);
     /* Discover endpoints accept an upper release-date bound. Without it,
        sorting newest-first gives unreleased films and premieres priority. */
-    if(sort_mode==2 && today[0] && !searching){
+    if((sort_mode==2 || sort_mode==3) && today[0] && !searching){
         int tv_category=!strcmp(category,"series") ||
                         !strcmp(category,"cartoon_series") ||
                         !strcmp(category,"anime");
@@ -1226,7 +1226,7 @@ int catalog_load_page_sorted(const char *category, const char *query, int page,
         if (!date[0]) json_field(p, end, "first_air_date", date, sizeof(date));
         /* Apply this check even to search/offline responses, which cannot use
            discover filters, so future releases never enter date-sorted lists. */
-        if(sort_mode==2 && !already_released(date,today)){
+        if((sort_mode==2 || sort_mode==3) && !already_released(date,today)){
             p=end;
             continue;
         }
