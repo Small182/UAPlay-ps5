@@ -305,6 +305,7 @@ static int ui_accent_index=ACCENT_TURQUOISE,accent_selected=0;
 static int autoplay_episodes=1;
 #define NEXT_EPISODE_DELAY_MS 3000u
 static int ui_light_theme=0,ui_theme_enabled=1,ui_gradient_pass=0;
+static int ui_wallpaper_active=0;
 static int accent_upgrade(int preset){
     switch(preset){
         case ACCENT_SYSTEM:
@@ -1055,24 +1056,31 @@ static void box_alpha(Paint *p,int x,int y,int w,int h,float r,float g,float b,f
         float top=fmaxf(r,fmaxf(g,b)),bottom=fminf(r,fminf(g,b));
         if(top<=.55f && top-bottom<=.22f){
             float v=.2126f*r+.7152f*g+.0722f*b;
-            r=g=b=fminf(.992f,.93f+.24f*v);
+            r=fminf(.98f,.82f+.55f*v);
+            g=fminf(.99f,.85f+.55f*v);
+            b=fminf(1.f,.87f+.55f*v);
         }else{r=1.f-r;g=1.f-g;b=1.f-b;}
     }else if(ui_theme_enabled && !ui_light_theme &&
              p->tex==p->solid_tex && !ui_gradient_pass){
         float top=fmaxf(r,fmaxf(g,b)),bottom=fminf(r,fminf(g,b));
         if(top<=.55f && top-bottom<=.22f){
             float v=.2126f*r+.7152f*g+.0722f*b;
-            r=g=b=.19f+.52f*v;
+            r=.042f+.65f*v;g=.057f+.70f*v;b=.076f+.76f*v;
         }
     }
+    if(ui_wallpaper_active && ui_theme_enabled && p->tex==p->solid_tex &&
+       !ui_gradient_pass && !ui_outline_width && radius>=12 && w>=350 && h>=100)
+        a*=ui_light_theme?.83f:.74f;
 #if defined(__PS4__) || defined(UAPLAY_PS5_SOFTWARE)
     if(ui_renderer){
 #ifdef UAPLAY_PS5_SOFTWARE
         if(ui_gradient_pass){
             for(int row=0;row<h;row+=16){
                 float t=(float)row/h;
-                float gray=ui_light_theme?.957f-.055f*t:.205f-.070f*t;
-                renderer_box(p,(SDL_Rect){x,y+row,w,h-row<16?h-row:16},gray,gray,gray,a,0);
+                float r=ui_light_theme?.91f-.045f*t:.035f+.018f*t;
+                float g=ui_light_theme?.93f-.045f*t:.043f+.025f*t;
+                float b=ui_light_theme?.94f-.045f*t:.055f+.035f*t;
+                renderer_box(p,(SDL_Rect){x,y+row,w,h-row<16?h-row:16},r,g,b,a,0);
             }
             return;
         }
@@ -1470,8 +1478,14 @@ static void gear_icon(Paint *p,int cx,int cy,float bg_r,float bg_g,float bg_b){
     polygon(p,teeth,48,fg,fg,fg);
     box_alpha(p,cx-5,cy-5,10,10,bg_r,bg_g,bg_b,1.f,5);
 }
+static void web_header_bg(Paint *p,int height){
+    int old=ui_theme_enabled;ui_theme_enabled=0;
+    box_alpha(p,0,0,1280,height,ui_light_theme?245.f/255:15.f/255,
+              ui_light_theme?247.f/255:18.f/255,ui_light_theme?249.f/255:21.f/255,1.f,0);
+    ui_theme_enabled=old;
+}
 static void screen_header(Paint *p,const char *name,const char *context){
-    box_alpha(p,0,0,1280,92,.058f,.069f,.083f,1.f,0);
+    web_header_bg(p,92);
     box_alpha(p,UI_EDGE,23,55,48,.13f,.16f,.20f,1.f,13);
     text_center(p,"‹",UI_EDGE,25,55,p->font_big,.96f,.97f,.99f);
     headline(p,name,105,23,860);
@@ -1626,6 +1640,7 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
 #endif
 #endif
     ui_theme_enabled=1;
+    ui_wallpaper_active=0;
     ui_gradient_pass=1;
     box_alpha(p,0,0,1280,720,.034f,.042f,.054f,1.f,0);
     ui_gradient_pass=0;
@@ -1647,6 +1662,7 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
             SDL_SetTextureAlphaMod(bg,255);
             SDL_RenderCopy(ui_renderer,bg,&src,&dst);
             box_alpha(p,0,0,1280,720,.016f,.023f,.031f,.43f,0);
+            ui_wallpaper_active=1;
         }
     }
 #endif
@@ -1716,7 +1732,7 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
             if(catalog_hero_focus==14)selection_frame(p,1050,98,198,46);
             button(p,TR("Закрити","Close"),1050,98,198,46,0);
         }else{
-        box_alpha(p,0,0,1280,80,.059f,.070f,.081f,1.f,0);
+        web_header_bg(p,80);
         headline(p,"UAPlay",25,18,166);
         const char *tabs[]={TR("Головна","Home"),TR("Серіали","TV Shows"),TR("Фільми","Movies"),
             TR("Мультфільми","Animation"),"IPTV",TR("Вибране","Favorites")};
@@ -1895,8 +1911,7 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
                        HERO_POSTER_W,hero_bottom-hero_top,&poster_budget);
                 headline(p,movies[active].title,hero_left,hero_top,967);
                 char tag[110];
-                snprintf(tag,sizeof(tag),"%s  ·  %s",movies[active].year,
-                         movies[active].series?"Серіал":"Фільм");
+                snprintf(tag,sizeof(tag),"★ %.1f  ·  %s",movies[active].rating,movies[active].year);
                 text_muted(p,tag,hero_left,hero_top+50,890);
                 wrapped(p,movies[active].overview,hero_left,hero_top+90,949,2,27,
                         p->font_small,.74f,.79f,.84f);
@@ -4062,7 +4077,7 @@ int main(void) {
                    catalog_hero_focus==0 &&
                    (key==SDL_CONTROLLER_BUTTON_DPAD_UP ||
                     key==SDL_CONTROLLER_BUTTON_DPAD_DOWN)){
-                    if(key==SDL_CONTROLLER_BUTTON_DPAD_UP && n>0 &&
+                    if(key==SDL_CONTROLLER_BUTTON_DPAD_UP && home_shelf==0 && n>0 &&
                        (chosen>=5 || chosen==n-1)){
                         /* The rightmost visible poster points to More. The
                            horizontal row shifts once the selection reaches
