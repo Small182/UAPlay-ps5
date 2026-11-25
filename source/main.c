@@ -2544,6 +2544,67 @@ static void draw_player_controls(Paint *p,mpv_handle *player) {
                     p->font_tiny,.77f,.83f,.88f);
     }
 }
+
+/* UAPlay-web player-settings-menu and track menus are overlays on the
+   video, not independent pages that stop rendering the current frame. */
+static void draw_player_sheet(Paint *p,int tracks_mode){
+    ui_theme_enabled=0;
+    box_alpha(p,0,0,1280,720,.005f,.008f,.012f,.52f,0);
+    box_alpha(p,824,67,422,593,.067f,.090f,.113f,.98f,19);
+    headline(p,tracks_mode?(subtitle_picker?
+                  TR("Субтитри","Subtitles"):TR("Аудіо","Audio")):
+                  TR("Параметри відео","Video settings"),850,93,368);
+    text_tiny(p,TR("○  Назад","○  Back"),849,132,342);
+    if(tracks_mode){
+        int first=selected_track/UI_ROWS*UI_ROWS;
+        if(!track_count)text_font(p,
+            TR("Немає доступних доріжок","No available tracks"),
+            850,254,374,p->font_small,.72f,.78f,.84f);
+        for(int i=first;i<track_count && i<first+UI_ROWS;i++){
+            int y=164+(i-first)*57;
+            box_alpha(p,840,y,388,50,
+                      i==selected_track?.15f:.11f,
+                      i==selected_track?.22f:.16f,
+                      i==selected_track?.26f:.20f,1.f,11);
+            if(i==selected_track)selection_frame(p,840,y,388,50);
+            text_font(p,tracks[i].label,852,y+10,330,
+                      p->font_small,.95f,.97f,.99f);
+            if(tracks[i].selected)
+                text_font(p,"✓",1189,y+11,28,
+                          p->font_small,.24f,.84f,.73f);
+        }
+        text_tiny(p,TR("▲▼ — доріжка     ✕ — застосувати",
+                       "▲▼ — track     ✕ — apply"),848,621,365);
+    }else{
+        for(int k=0;k<VIDEO_OPTION_COUNT;k++){
+            int option=visible_video_options[k];
+            int y=163+k*72;
+            box_alpha(p,839,y,389,63,
+                      k==selected_video_option?.15f:.11f,
+                      k==selected_video_option?.22f:.16f,
+                      k==selected_video_option?.27f:.20f,1.f,11);
+            if(k==selected_video_option)selection_frame(p,839,y,389,63);
+            const char *label=ui_text(video_titles[option]);
+            text_font(p,label,851,y+7,333,p->font_small,.95f,.96f,.98f);
+            char value[60];
+            if(option==VIDEO_OPTION_AUTOPLAY)
+                snprintf(value,sizeof(value),"%s",autoplay_episodes?
+                    TR("Увімкнено","Enabled"):TR("Вимкнено","Disabled"));
+            else if(option==6)
+                snprintf(value,sizeof(value),"%s",hls_labels[(int)video_options[6]]);
+            else if(option==0)
+                snprintf(value,sizeof(value),"%.2fx",video_options[0]);
+            else if(option==5)
+                snprintf(value,sizeof(value),"%+.2f s",video_options[5]);
+            else
+                snprintf(value,sizeof(value),"%.0f",video_options[option]);
+            text_font(p,value,851,y+33,333,p->font_small,.70f,.84f,.85f);
+        }
+        text_tiny(p,TR("← → — змінити     ○ — назад",
+                       "← → — change     ○ — back"),848,621,365);
+    }
+}
+
 static void draw_next_episode_prompt(Paint *p,const Episode *next,int seconds){
     ui_theme_enabled=0;
     box_alpha(p,0,0,1280,720,.012f,.018f,.027f,.88f,0);
@@ -4572,7 +4633,9 @@ int main(void) {
 #endif
             media_playback_mode=watching_video;
         }
-        if(page==PLAYER && render){
+        int player_overlay=(page==TRACK_PICKER ||
+                            (page==VIDEO_SETTINGS && !video_settings_from_menu));
+        if((page==PLAYER || player_overlay) && render){
             ui_theme_enabled=0;
             int render_result;
 #ifdef UAPLAY_PS5_SOFTWARE
@@ -4631,7 +4694,9 @@ int main(void) {
                 box_alpha(&paint,0,0,1280,720,white,white,white,opacity,0);
             }
 #endif
-            if(video_loaded && SDL_GetTicks()<controls_until)draw_player_controls(&paint,player);
+            if(player_overlay)draw_player_sheet(&paint,page==TRACK_PICKER);
+            else if(video_loaded && SDL_GetTicks()<controls_until)
+                draw_player_controls(&paint,player);
 #ifdef UAPLAY_PS5_SOFTWARE
             if(ps5_stick_hud_kind && SDL_GetTicks()-ps5_stick_hud_at<1500u){
                 char indicator[80];
@@ -4644,7 +4709,7 @@ int main(void) {
                                    paint.font_small,.94f,.97f,.99f);
             }
 #endif
-            if(pending_next_episode>=0){
+            if(!player_overlay && pending_next_episode>=0){
                 Uint32 elapsed=SDL_GetTicks()-next_episode_countdown_at;
                 int remaining=elapsed<NEXT_EPISODE_DELAY_MS?
                     (int)((NEXT_EPISODE_DELAY_MS-elapsed+999u)/1000u):0;
@@ -4686,7 +4751,7 @@ int main(void) {
         /* Do not stack a fixed sleep on top of the time that Eden/Switch
            already spent drawing or waiting for VSync. */
         Uint32 frame_elapsed=SDL_GetTicks()-frame_started_at;
-        Uint32 frame_budget=page==PLAYER?16u:33u;
+        Uint32 frame_budget=(page==PLAYER || player_overlay)?16u:33u;
         if(frame_elapsed<frame_budget)SDL_Delay(frame_budget-frame_elapsed);
     }
 #ifdef __SWITCH__
