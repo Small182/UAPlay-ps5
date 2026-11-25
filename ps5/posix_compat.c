@@ -20,6 +20,8 @@
 #include <unistd.h>
 #include <xlocale/_locale.h>
 
+/* The libVLC build supplies five of these POSIX functions through
+ * its upstream libps5compat archive. Keep UAPlay's remaining shims. */
 static char c_locale_token;
 
 locale_t newlocale(int mask, const char *name, locale_t base) {
@@ -31,11 +33,13 @@ locale_t newlocale(int mask, const char *name, locale_t base) {
     return (locale_t)0;
 }
 
+#ifndef UAPLAY_USE_VLC_COMPAT
 locale_t uselocale(locale_t next) {
     (void)next;
     /* Only the process-wide C locale is available in this SDK build. */
     return LC_GLOBAL_LOCALE;
 }
+#endif
 
 int freelocale(locale_t handle) {
     (void)handle;
@@ -55,9 +59,11 @@ char *nl_langinfo(nl_item item) {
     }
 }
 
+#ifndef UAPLAY_USE_VLC_COMPAT
 int ___mb_cur_max(void) {
     return __mb_cur_max > 0 ? __mb_cur_max : 1;
 }
+#endif
 
 struct tm *gmtime_r(const time_t *value, struct tm *result) {
     if (!value || !result) { errno = EINVAL; return NULL; }
@@ -75,6 +81,7 @@ struct tm *localtime_r(const time_t *value, struct tm *result) {
     return result;
 }
 
+#ifndef UAPLAY_USE_VLC_COMPAT
 int mkostemp(char *name, int flags) {
     int fd = mkstemp(name);
     if (fd < 0) return fd;
@@ -95,7 +102,9 @@ fail:
         return -1;
     }
 }
+#endif
 
+#ifndef UAPLAY_USE_VLC_COMPAT
 int pipe2(int out[2], int flags) {
     if (flags & ~(O_CLOEXEC | O_NONBLOCK)) { errno = EINVAL; return -1; }
     if (pipe(out) < 0) return -1;
@@ -112,6 +121,7 @@ int pipe2(int out[2], int flags) {
     }
     return 0;
 }
+#endif
 
 int dladdr(const void *address, Dl_info *info) {
     (void)address;
@@ -119,11 +129,13 @@ int dladdr(const void *address, Dl_info *info) {
     return 0;  /* Native loader symbol introspection is unavailable. */
 }
 
+#ifndef UAPLAY_USE_VLC_COMPAT
 unsigned int if_nametoindex(const char *name) {
     (void)name;
     errno = ENXIO;  /* Interface-name lookup is not exposed by this SDK. */
     return 0;
 }
+#endif
 
 int getpwuid_r(uid_t uid, struct passwd *pwd, char *buffer,
                size_t size, struct passwd **result) {
