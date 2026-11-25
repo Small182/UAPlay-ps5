@@ -390,6 +390,8 @@ static int theme_save(void){
 }
 static int video_settings_from_menu=0;
 static int ui_category=0;
+static char ui_search_query[192];
+static int web_grid(int category,const char *query){return (query && *query) || (category!=0 && category!=11 && category!=12);}
 static int tab_for_category(int category){
     if(category==0)return 0;
     if(category==1)return 1;
@@ -663,8 +665,7 @@ static void catalog_loader_poll(Movie **movies,int *count,int *capacity,int chos
     /* Keep the initial 200-item background budget, then advance further only
        when the user scrolls toward the end of the expanded/search catalog. */
     if(catalog_has_more && !catalog_loading && catalog_next_page<=500 &&
-       *count<limit && (*count<CATALOG_MAX ||
-          ((expanded_catalog || (query && *query)) && *count-chosen<=42)))
+       *count<limit && (web_grid(category,query)?*count-chosen<=18:*count<CATALOG_MAX))
         catalog_loader_request(catalog_next_page++,category,query);
 }
 static void catalog_loader_shutdown(void){
@@ -713,7 +714,7 @@ static int load_category(int category,const char *query,Movie *movies,char *mess
         count=catalog_filter_countries(movies,count);
     if(count>1 && ((query && *query) || category==11 || category==12))
         qsort(movies,(size_t)count,sizeof(Movie),compare_movie_sort);
-    catalog_loader_reset(data_category,query,count,category!=0 && !message[0]);
+    catalog_loader_reset(data_category,query,count,(category!=0 || query[0]) && category!=11 && category!=12 && !message[0]);
     return count;
 }
 typedef struct {
@@ -1531,7 +1532,7 @@ static void footer(Paint *p,const char *message) {
         HINT("L","Розділ");HINT("R","Розділ");
         HINT("X","Пошук");HINT("−","Меню");HINT("A","Відкрити");
         if(ui_category==0 && !expanded_catalog)HINT("↑↓","Добірка");
-        if(expanded_catalog)HINT("B","Згорнути");
+        if(expanded_catalog)HINT("B","Назад");
         else if(ui_category!=0)HINT("B","Головна");
     }else if(footer_page==DETAILS){
         HINT("X","Вибране");HINT("Y","Переглянуто");
@@ -1706,6 +1707,15 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
         return;
     }
     if (page==CATALOG || page==IPTV_CHANNELS) {
+        if(page==CATALOG && ui_search_query[0]){
+            screen_header(p,TR("Пошук","Search"),NULL);
+            box_alpha(p,32,98,1000,46,.13f,.16f,.19f,1.f,14);
+            if(catalog_hero_focus==5)selection_frame(p,32,98,1000,46);
+            search_icon(p,58,121,.13f,.16f,.19f);
+            text(p,ui_search_query,88,106,925);
+            if(catalog_hero_focus==14)selection_frame(p,1050,98,198,46);
+            button(p,TR("Закрити","Close"),1050,98,198,46,0);
+        }else{
         box_alpha(p,0,0,1280,80,.059f,.070f,.081f,1.f,0);
         headline(p,"UAPlay",25,18,166);
         const char *tabs[]={TR("Головна","Home"),TR("Серіали","TV Shows"),TR("Фільми","Movies"),
@@ -1737,6 +1747,7 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
         if(local)strftime(clock_label,sizeof(clock_label),"%H:%M",local);
         text_font(p,clock_label,1116,18,106,
                   p->font_big,.95f,.97f,.99f);
+        }
         if(page==IPTV_CHANNELS){
             int nc=0,ng=0;
             const IptvCountry *countries=iptv_countries(&nc);
@@ -1835,29 +1846,37 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
                 card_title(p,movies[i].title,x,y+poster_h+3,166);
             }
         }else if(expanded_catalog){
-            headline(p,heading,UI_EDGE,97,960);
-            const char *sort_labels[]={"Рейтинг","Популярність"};
-            const int sort_x[]={785,928},sort_w[]={132,159};
-            for(int i=0;i<2;i++){
-                int active=catalog_sort_mode==sort_mode_for_button(i);
-                box_alpha(p,sort_x[i],98,sort_w[i],44,
-                          active?.20f:.10f,
-                          active?.27f:.14f,
-                          active?.33f:.18f,1.f,12);
-                if(catalog_hero_focus==12+i)
-                    selection_frame(p,sort_x[i],98,sort_w[i],44);
-                text_center_button(p,sort_labels[i],sort_x[i],98,sort_w[i],44,
-                                   p->font_small,.96f,.97f,.99f);
+            const int searching=ui_search_query[0]!=0;
+            const int tabs_n=searching?0:subsection_count(ui_category);
+            const int grid_y=searching?186:tabs_n?204:153;
+            const int step=searching?226:tabs_n?216:246;
+            const int ph=searching||tabs_n?174:190;
+            const int pw=ph*2/3;
+            if(searching){
+                char results[96];snprintf(results,sizeof(results),TR("Результати (%d)","Results (%d)"),n);
+                text(p,results,32,151,1000);
+            }else{
+                headline(p,heading,UI_EDGE,97,660);
+                const char *sort_names[]={TR("Популярність","Popularity"),TR("Рейтинг","Rating"),TR("Найновіші","Newest"),TR("Найстаріші","Oldest")};
+                char sort_label[128];snprintf(sort_label,sizeof(sort_label),"%s: %s",TR("Сортування","Sort"),sort_names[catalog_sort_mode]);
+                if(catalog_hero_focus==12)selection_frame(p,750,98,498,44);
+                button(p,sort_label,750,98,498,44,0);
+                const char *animation_tabs[]={TR("Мультфільми","Movies"),TR("Мультсеріали","Series"),TR("Аніме","Anime")};
+                for(int i=0;i<tabs_n;i++){
+                    int x=32+i*240;
+                    box_alpha(p,x,151,224,42,.13f,.16f,.19f,1.f,13);
+                    if(catalog_hero_focus==16+i)selection_frame(p,x,151,224,42);
+                    text_center_button(p,tab_for_category(ui_category)==2?film_labels[i]:animation_tabs[i],x,151,224,42,p->font_small,.96f,.97f,.99f);
+                }
             }
-            if(catalog_hero_focus==14)selection_frame(p,1106,98,142,44);
-            button(p,"‹  Назад",1106,98,142,44,0);
             int start=chosen/12*12;
             for(int i=start;i<n && i<start+12;i++){
-                int k=i-start,x=54+k%6*201,y=153+k/6*246;
-                if(i==chosen)selection_frame(p,x,y,138,206);
-                poster(p,&movies[i],x,y,138,206,&poster_budget);
+                int k=i-start,x=54+k%6*201,y=grid_y+k/6*step;
+                if(i==chosen && catalog_hero_focus==0)selection_frame(p,x,y,pw,ph);
+                poster(p,&movies[i],x,y,pw,ph,&poster_budget);
+                card_title(p,movies[i].title,x,y+ph+3,166);
             }
-            if(n)text_muted(p,movies[chosen].title,54,635,1150);
+            if(!n)text_center_button(p,TR("Нічого не знайдено","No results"),32,300,1216,90,p->font_big,.73f,.77f,.82f);
         }else{
             int active=chosen>=0 && chosen<n?chosen:0;
             enum { HERO_Y=92, HERO_W=1216, HERO_H=222, HERO_PAD=12,
@@ -3110,7 +3129,7 @@ int main(void) {
                         else if(tx>=1109 && tx<1167)key=SDL_CONTROLLER_BUTTON_X;
                     }else continue;
                 }else if(page==CATALOG){
-                    if(ty<78 && tx>=193 && tx<830){
+                    if(!query[0] && ty<78 && tx>=193 && tx<830){
                         int focus=main_tab_at(tx);
                         if(focus==IPTV_TAB_FOCUS){page=IPTV_COUNTRIES;continue;}
                         if(focus>=7 && focus<=11){
@@ -3125,8 +3144,8 @@ int main(void) {
                         }
                         continue;
                     }
-                    if(ty<78 && tx>=887 && tx<1044)key=SDL_CONTROLLER_BUTTON_X;
-                    else if(ty<78 && tx>=1058 && tx<1111)key=SDL_CONTROLLER_BUTTON_BACK;
+                    if(!query[0] && ty<78 && tx>=887 && tx<1044)key=SDL_CONTROLLER_BUTTON_X;
+                    else if(!query[0] && ty<78 && tx>=1058 && tx<1111)key=SDL_CONTROLLER_BUTTON_BACK;
                     else if((category==11 || category==12) && !expanded_catalog){
                         if(ty>=101 && ty<148){
                             int tab=-1;
@@ -3164,19 +3183,22 @@ int main(void) {
                         }
                     }
                     else if(expanded_catalog){
-                        if(ty>=98 && ty<142 && tx>=785 && tx<1087){
-                            const int sort_x[]={785,928},sort_w[]={132,159};
-                            for(int i=0;i<2;i++)
-                                if(tx>=sort_x[i] && tx<sort_x[i]+sort_w[i]){
-                                    catalog_hero_focus=12+i;key=SDL_CONTROLLER_BUTTON_A;break;
-                                }
-                        }
-                        if(ty>=95 && ty<145 && tx>=1106){expanded_catalog=0;chosen=0;catalog_hero_focus=0;continue;}
-                        if(ty>=153 && ty<613 && tx>=54){
-                            int col=(tx-54)/201,row=(ty-153)/246;
+                        int searching=query[0]!=0,tabs_n=searching?0:subsection_count(category);
+                        int grid_y=searching?186:tabs_n?204:153;
+                        int step=searching?226:tabs_n?216:246;
+                        int ph=searching||tabs_n?174:190,pw=ph*2/3;
+                        if(searching && ty<92 && tx<100)key=SDL_CONTROLLER_BUTTON_B;
+                        else if(searching && ty>=98 && ty<144){
+                            if(tx>=1050)key=SDL_CONTROLLER_BUTTON_B;
+                            else if(tx>=32 && tx<1032)key=SDL_CONTROLLER_BUTTON_X;
+                        }else if(!searching && ty>=98 && ty<142 && tx>=750){
+                            catalog_hero_focus=12;key=SDL_CONTROLLER_BUTTON_A;
+                        }else if(tabs_n && ty>=151 && ty<193 && tx>=32 && (tx-32)/240<tabs_n){
+                            catalog_hero_focus=16+(tx-32)/240;key=SDL_CONTROLLER_BUTTON_A;
+                        }else if(ty>=grid_y && tx>=54){
+                            int col=(tx-54)/201,row=(ty-grid_y)/step;
                             int index=chosen/12*12+row*6+col;
-                            if(col<6 && row<2 && index<n && (tx-54)%201<138 &&
-                               (ty-153)%246<206){
+                            if(col<6 && row<2 && index<n && (tx-54)%201<pw && (ty-grid_y)%step<ph){
                                 chosen=index;catalog_hero_focus=0;key=SDL_CONTROLLER_BUTTON_A;
                             }
                         }
@@ -3972,6 +3994,45 @@ int main(void) {
             if(key==SDL_CONTROLLER_BUTTON_START){running=0;continue;}
 #endif
             if(page==CATALOG){
+                if(web_grid(category,query))expanded_catalog=1;
+                if(expanded_catalog && web_grid(category,query)){
+                    int searching=query[0]!=0,tabs_n=searching?0:subsection_count(category);
+                    int f=catalog_hero_focus;
+                    if(key==SDL_CONTROLLER_BUTTON_B || (searching && key==SDL_CONTROLLER_BUTTON_A && f==14)){
+                        category=0;home_shelf=0;query[0]=message[0]=0;expanded_catalog=0;
+                        n=load_category(category,query,movies,message,sizeof(message));chosen=0;catalog_hero_focus=0;continue;
+                    }
+                    if(key==SDL_CONTROLLER_BUTTON_A && !searching && f==12){
+                        catalog_sort_mode=(catalog_sort_mode+1)%4;
+                        n=load_category(category,query,movies,message,sizeof(message));chosen=0;continue;
+                    }
+                    if(key==SDL_CONTROLLER_BUTTON_A && f>=16 && f<16+tabs_n){
+                        category=category_for_subsection(category,f-16);query[0]=message[0]=0;
+                        n=load_category(category,query,movies,message,sizeof(message));chosen=0;continue;
+                    }
+                    if(key==SDL_CONTROLLER_BUTTON_DPAD_LEFT || key==SDL_CONTROLLER_BUTTON_DPAD_RIGHT || key==SDL_CONTROLLER_BUTTON_DPAD_UP || key==SDL_CONTROLLER_BUTTON_DPAD_DOWN){
+                        int left=key==SDL_CONTROLLER_BUTTON_DPAD_LEFT,right=key==SDL_CONTROLLER_BUTTON_DPAD_RIGHT;
+                        int up=key==SDL_CONTROLLER_BUTTON_DPAD_UP,down=key==SDL_CONTROLLER_BUTTON_DPAD_DOWN;
+                        if(f==0){
+                            if(left && chosen>0)chosen--;if(right && chosen<n-1)chosen++;
+                            if(up){if(chosen>=6)chosen-=6;else catalog_hero_focus=searching?5:tabs_n?focused_subsection(category):12;}
+                            if(down && chosen+6<n)chosen+=6;
+                        }else if(searching){
+                            if(left || right)catalog_hero_focus=f==14?5:14;
+                            if(down && n)catalog_hero_focus=0;
+                        }else if(f>=16 && f<16+tabs_n){
+                            if(left && f>16)catalog_hero_focus--;if(right && f<15+tabs_n)catalog_hero_focus++;
+                            if(up)catalog_hero_focus=12;if(down && n)catalog_hero_focus=0;
+                        }else if(f==12){
+                            if(up)catalog_hero_focus=7+tab_for_category(category);
+                            if(down)catalog_hero_focus=tabs_n?focused_subsection(category):0;
+                        }else{
+                            if(left || right)catalog_hero_focus=header_focus_step(f,key);
+                            if(down)catalog_hero_focus=12;
+                        }
+                        continue;
+                    }
+                }
                 if(key==SDL_CONTROLLER_BUTTON_BACK){page=SETTINGS;continue;}
                 if(key==SDL_CONTROLLER_BUTTON_A && catalog_hero_focus==IPTV_TAB_FOCUS){
                     page=IPTV_COUNTRIES;message[0]=0;continue;
@@ -3982,7 +4043,7 @@ int main(void) {
                     settings_selected=0;page=SETTINGS;continue;
                 }
                 if(key==SDL_CONTROLLER_BUTTON_RIGHTSTICK){
-                    if(category==11 || category==12)continue;
+                    if(web_grid(category,query) || category==11 || category==12)continue;
                     if(category==0 && !expanded_catalog && !query[0]){
                         catalog_hero_focus=3;key=SDL_CONTROLLER_BUTTON_A;
                     }else{
@@ -4107,7 +4168,7 @@ int main(void) {
                     else if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN && !n)
                         catalog_hero_focus=7+tab_for_category(category);
                 }
-                if(key==SDL_CONTROLLER_BUTTON_A && (n || catalog_hero_focus>=3)){
+                if(key==SDL_CONTROLLER_BUTTON_A && (n || catalog_hero_focus>=3) && !(web_grid(category,query) && catalog_hero_focus==0 && !n)){
                     if(expanded_catalog && catalog_hero_focus>=12 &&
                        catalog_hero_focus<=14){
                         if(catalog_hero_focus==14){
@@ -4486,6 +4547,8 @@ int main(void) {
             }
         }else{
             ui_category=category;
+            snprintf(ui_search_query,sizeof(ui_search_query),"%s",query);
+            if(page==CATALOG && web_grid(category,query))expanded_catalog=1;
             /* The focused card takes priority; the remaining worker slots
                prefetch the visible row and a part of the next row. */
             if(page==CATALOG && n>0)
