@@ -14,6 +14,26 @@
 #include <stdint.h>
 #include <math.h>
 
+/* Upstream VLC-PS5 has weak hooks provided by its standalone player.
+ * A PS5 title cannot import undefined weak application symbols, so implement
+ * these locally. Cancellation is atomic because VLC calls it on worker threads. */
+static long next_open_serial;
+static long cancelled_serial;
+int vlc_ps5_stream_cancelled(long serial){
+    return serial>0 && serial<=__atomic_load_n(&cancelled_serial,__ATOMIC_ACQUIRE);
+}
+int vlc_ps5_log_details(void){return 0;}
+/* Retain upstream's normal aligned heap fallback for large pictures. */
+void *vlc_ps5_big_alloc(size_t bytes){(void)bytes;return NULL;}
+int vlc_ps5_big_free(void *ptr){(void)ptr;return 0;}
+/* CPU renderer: copy only visible rows, including their distinct pitches. */
+void vlc_ps5_copy_plane(uint8_t *dst,size_t dst_pitch,const uint8_t *src,
+                        size_t src_pitch,size_t bytes,unsigned rows){
+    for(unsigned i=0;i<rows;i++){
+        memcpy(dst,src,bytes);
+        dst+=dst_pitch;src+=src_pitch;
+    }
+}
 struct mpv_handle {
     libvlc_instance_t *vlc;
     libvlc_media_player_t *mp;
@@ -22,6 +42,7 @@ struct mpv_handle {
     unsigned char *frame;
     unsigned width,height,pitch,serial,decoded,generation;
     int active,started,loaded,volume;
+    long open_serial;
     char ua[160],referer[512],error[256],diag[160];
 };
 struct mpv_render_context {
@@ -91,6 +112,13 @@ static void audio_flush(void *opaque,int64_t pts){
 static void audio_drain(void *opaque){(void)opaque;}
 static void stop(mpv_handle *p){
     p->active=0;
+    if(p->open_serial>0){
+        long prev=__atomic_load_n(&cancelled_serial,__ATOMIC_RELAXED);
+        while(prev<p->open_serial &&
+              !__atomic_compare_exchange_n(&cancelled_serial,&prev,p->open_serial,
+                                           1,__ATOMIC_RELEASE,__ATOMIC_RELAXED)){}
+        p->open_serial=0;
+    }
     if(p->mp)libvlc_media_player_stop(p->mp);
     if(p->audio)SDL_ClearQueuedAudio(p->audio);
     p->loaded=p->started=0;
@@ -153,6 +181,9 @@ int mpv_command_async(mpv_handle *p,unsigned long long userdata,const char **a){
         libvlc_media_t *m=strstr(a[1],"://")?libvlc_media_new_location(p->vlc,a[1]):libvlc_media_new_path(p->vlc,a[1]);
         if(!m){snprintf(p->error,sizeof(p->error),"libVLC: unable to create media");return -1;}
         char opt[600];
+        p->open_serial=__atomic_add_fetch(&next_open_serial,1,__ATOMIC_RELAXED);
+        snprintf(opt,sizeof(opt),":ps5http-serial=%ld",p->open_serial);
+        libvlc_media_add_option(m,opt);
         if(p->ua[0]){snprintf(opt,sizeof(opt),":http-user-agent=%s",p->ua);libvlc_media_add_option(m,opt);}
         if(p->referer[0]){snprintf(opt,sizeof(opt),":http-referrer=%s",p->referer);libvlc_media_add_option(m,opt);}
         libvlc_media_player_set_media(p->mp,m);libvlc_media_release(m);
