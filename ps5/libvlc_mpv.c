@@ -98,11 +98,11 @@ static void vlc_console_log(void *opaque,int level,const libvlc_log_t *ctx,const
     char line[256];vsnprintf(line,sizeof(line),fmt,args);
     const char *module=NULL;
     libvlc_log_get_context(ctx,&module,NULL,NULL);
-    if(module && (strstr(module,"vout")||strstr(module,"vmem")||strstr(module,"decoder")||
+    if(level>=LIBVLC_ERROR || (module && (strstr(module,"vout")||strstr(module,"vmem")||strstr(module,"decoder")||
                   strstr(module,"avcodec")||strstr(module,"ps5vdec")||strstr(module,"swscale")||
-                  strstr(module,"video")||strstr(module,"chroma"))){
+                  strstr(module,"video")||strstr(module,"chroma")))){
         SDL_AtomicLock(&vlc_log_lock);
-        snprintf(vlc_video_warning,sizeof(vlc_video_warning),"%.20s: %.100s",module,line);
+        snprintf(vlc_video_warning,sizeof(vlc_video_warning),"%.20s: %.100s",module?module:"VLC",line);
         SDL_AtomicUnlock(&vlc_log_lock);
     }
 }
@@ -131,7 +131,7 @@ struct mpv_handle {
     unsigned width,height,pitches[3],lines[3],serial,decoded,generation;
     unsigned ten_bit,two_planes,full_range,p010;
     Uint32 playing_since,opened_at,stats_at;
-    unsigned setup_count,display_count;
+    unsigned setup_count,display_count,setup_ok,setup_fail;
     int video_tracks,core_decoded,core_lost,core_shown;
     char source_chroma[5];
     libvlc_time_t last_video_time;
@@ -154,7 +154,7 @@ static void frame_free(void *ptr){
     if(ptr&&!vlc_ps5_big_free(ptr))free(ptr);
 }
 static void *frame_alloc(size_t size){
-    void *ptr=size>=(4u<<20)?vlc_ps5_big_alloc(size):NULL;
+    void *ptr=vlc_ps5_big_alloc(size);
     if(!ptr&&posix_memalign(&ptr,64,size)!=0)ptr=NULL;
     return ptr;
 }
@@ -191,7 +191,7 @@ static unsigned video_setup(void **opaque,char *chroma,unsigned *w,unsigned *h,
     p->frame_size=size;
     p->frame=frame_alloc(size);p->ready_frame=frame_alloc(size);
     int ok=p->frame&&p->ready_frame;
-    if(!ok)video_buffers_free(p);
+    if(!ok){p->setup_fail++;video_buffers_free(p);}else p->setup_ok++;
     p->generation++;
     snprintf(p->diag,sizeof(p->diag),"VLC %s %.4s %ux%u%s",
              __atomic_load_n(&hw_active,__ATOMIC_ACQUIRE)?"HW":"SW",chroma,*w,*h,ok?"":" alloc failed");
@@ -325,7 +325,7 @@ static void stop(mpv_handle *p){
     audio_clear(p);
     SDL_LockMutex(p->audio_lock);p->audio_packets=0;SDL_UnlockMutex(p->audio_lock);
     p->playing_since=0;p->opened_at=0;p->last_video_time=0;p->stats_at=0;
-    p->setup_count=p->display_count=0;p->video_tracks=p->core_decoded=p->core_lost=p->core_shown=0;
+    p->setup_count=p->display_count=p->setup_ok=p->setup_fail=0;p->video_tracks=p->core_decoded=p->core_lost=p->core_shown=0;
     SDL_AtomicLock(&vlc_log_lock);vlc_video_warning[0]=0;SDL_AtomicUnlock(&vlc_log_lock);
     p->loaded=p->started=0;
     __atomic_store_n(&hw_active,0,__ATOMIC_RELEASE);
@@ -348,6 +348,10 @@ int mpv_initialize(mpv_handle *p){
     mkdir(UAPLAY_DATA_ROOT "/.cache",0777);
     setenv("HOME",UAPLAY_DATA_ROOT,1);
     setenv("TMPDIR",UAPLAY_DATA_ROOT "/cache",1);
+    /* Check the actual allocation route before creating VLC frame pools. */
+    void *test=aligned_alloc(64,512);
+    if(!test || ((uintptr_t)test&63u)){free(test);init_status("aligned_alloc failed",NULL);return -1;}
+    free(test);
     init_status("hardware probe",NULL);
     ps5_vlc_hw_init();
     /* Match the pinned VLC-PS5 player's options. The static ps5vdec plugin
@@ -563,10 +567,12 @@ const char *ps5_kitchen_diagnostic(mpv_handle *p){
     char warning[128];
     SDL_AtomicLock(&vlc_log_lock);memcpy(warning,vlc_video_warning,sizeof(warning));SDL_AtomicUnlock(&vlc_log_lock);
     SDL_LockMutex(p->lock);
-    snprintf(details,sizeof(details),"%s V:%d D:%d L:%d S:%u P:%u F:%u %.4s %.100s",
+    extern void hui_heap_stats(size_t*,size_t*,size_t*,size_t*);
+    size_t live=0,failures=0;hui_heap_stats(&live,NULL,NULL,&failures);
+    snprintf(details,sizeof(details),"%s D:%d S:%u/%u P:%u F:%u %.4s H:%zuM E:%zu %.65s",
         p->software_retry?"SW":__atomic_load_n(&hw_active,__ATOMIC_ACQUIRE)?"HW":"AUTO",
-        p->video_tracks,p->core_decoded,p->core_lost,p->setup_count,p->decoded,p->display_count,
-        p->chroma,warning);
+        p->core_decoded,p->setup_ok,p->setup_fail,p->decoded,p->display_count,
+        p->chroma,live>>20,failures,warning);
     SDL_UnlockMutex(p->lock);
     return details;
 }

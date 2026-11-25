@@ -56,7 +56,7 @@ if s.count(marker) != 1:
 s = s.replace(marker, marker + '''# libc++ embeds an ELF dependent-library directive for pthread, but PS5
 # supplies pthread symbols via the explicit libkernel imports, not libpthread.
 # Ignore automatic library directives; unresolved symbols are still fatal.
-wrap_options+=(--no-dependent-libraries --error-limit=0 --exclude-libs=ALL --wrap=mmap --wrap=munmap --wrap=geteuid --wrap=getegid -u vlc_static_modules)
+wrap_options+=(--no-dependent-libraries --error-limit=0 --exclude-libs=ALL --wrap=mmap --wrap=munmap --wrap=aligned_alloc --wrap=geteuid --wrap=getegid -u vlc_static_modules)
 # Reuse VLC's console compatibility symbol mappings, except for resolver
 # calls already implemented by UAPlay's console_curl.c.
 while IFS= read -r name; do
@@ -107,3 +107,62 @@ source = source.replace(after, """    require(missing_imports.empty(), "Missing 
 """ + after)
 converter.write_text(source)
 
+
+# VLC's picture pool uses C11 aligned_alloc even for its small pool header.
+# Route it through the same checked, free-compatible allocator as the rest
+# of the title. Also allow VLC's 20+ frame pools more space than the UI's
+# original fixed 128 MiB heap. Fall back to the original size if constrained.
+heap = p.parent.parent / "src/runtime/app_heap.c"
+hs = heap.read_text()
+def replace_heap(old, new):
+    global hs
+    if hs.count(old) != 1:
+        raise SystemExit("Unexpected title heap hook: " + old)
+    hs = hs.replace(old, new)
+replace_heap("#define HUI_HEAP_SIZE (128u * 1024u * 1024u)",
+             "#define HUI_HEAP_SIZE (384u * 1024u * 1024u)\nstatic size_t hui_heap_capacity;")
+replace_heap("void *base = mmap(NULL, HUI_HEAP_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);",
+"""size_t capacity = HUI_HEAP_SIZE;
+    void *base = mmap(NULL, capacity, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (base == MAP_FAILED) {
+        capacity = 128u * 1024u * 1024u;
+        base = mmap(NULL, capacity, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    }""")
+replace_heap('hui_heap_mspace = sceLibcMspaceCreate("ps5-homebrew-ui", base, HUI_HEAP_SIZE, 0);',
+             'hui_heap_capacity = capacity;\n    hui_heap_mspace = sceLibcMspaceCreate("ps5-homebrew-ui", base, capacity, 0);')
+replace_heap("munmap(base, HUI_HEAP_SIZE);", "munmap(base, capacity);")
+replace_heap("value - base < HUI_HEAP_SIZE", "value - base < hui_heap_capacity")
+replace_heap("""    int result = sceLibcMspacePosixMemalign(hui_heap_mspace, address, alignment, size);
+    if (result == 0)
+        hui_heap_record_allocation(*address, size != 0);
+    else if (result == ENOMEM)
+        atomic_fetch_add_explicit(&hui_heap_failures, 1, memory_order_relaxed);
+    return result;""",
+"""    *address = NULL;
+    int result = sceLibcMspacePosixMemalign(hui_heap_mspace, address, alignment, size);
+    if (result == 0 && *address != NULL) {
+        hui_heap_record_allocation(*address, size != 0);
+        return 0;
+    }
+    atomic_fetch_add_explicit(&hui_heap_failures, 1, memory_order_relaxed);
+    return __real_posix_memalign(address, alignment, size);""")
+hs += """
+/* libc's aligned_alloc is not necessarily implemented by the title runtime.
+   VLC's picture and pool allocations must use the same heap/free family. */
+void *__wrap_aligned_alloc(size_t alignment, size_t size)
+{
+    if (alignment < sizeof(void *) || (alignment & (alignment - 1)) ||
+        size % alignment) {
+        errno = EINVAL;
+        return NULL;
+    }
+    void *ptr = NULL;
+    int rc = __wrap_posix_memalign(&ptr, alignment, size ? size : alignment);
+    if (rc != 0) {
+        errno = rc > 0 ? rc : ENOMEM;
+        return NULL;
+    }
+    return ptr;
+}
+"""
+heap.write_text(hs)
