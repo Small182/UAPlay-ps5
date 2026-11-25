@@ -16,5 +16,11 @@ for name in country_filter_smoke date_sort_smoke details_metadata_smoke playerjs
   "${out}/${name}"
 done
 
+# Episode history uses a per-test scratch directory rather than touching the
+# user's existing SD or the repository checkout.
+cc -O2 -Wall -Wextra -Isource source/library.c tests/episode_history_smoke.c \
+   -o "${out}/episode_history_smoke"
+(cd "${out}" && ./episode_history_smoke)
+
 echo 'Portable UAPlay checks passed.'
 
