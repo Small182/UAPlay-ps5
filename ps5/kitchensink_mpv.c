@@ -380,6 +380,16 @@ int mpv_render_context_create(mpv_render_context **out,mpv_handle *p,const mpv_r
     return 0;
 }
 
+/* Use the same surface-to-texture path as the working poster renderer when
+ * the native software renderer refuses streaming texture uploads. */
+static int render_failure(mpv_handle *p,const char *stage){
+    const char *err=SDL_GetError();
+    snprintf(p->error_text,sizeof(p->error_text),"%s: %s",stage,err&&*err?err:"unknown SDL error");
+    video_diagnostic(p,stage,-1);
+    FILE *f=fopen(UAPLAY_DATA_ROOT "/video.log","a");
+    if(f){fprintf(f,"%s\n",p->error_text);fclose(f);}
+    return -1;
+}
 int mpv_render_context_render(mpv_render_context *ctx,const mpv_render_param *args){
     (void)args;
     if(!ctx || !ctx->owner || !ui_renderer)return -1;
@@ -398,15 +408,23 @@ int mpv_render_context_render(mpv_render_context *ctx,const mpv_render_param *ar
     int result=0;
     if(Kit_LockPlayerVideoRawFrame(p->decoder,&planes,&strides,&area)==0){
         if(planes && planes[0] && strides && area.w>0 && area.h>0 && strides[0]/4>=area.w){
-            if(!ctx->texture || area.w!=ctx->width || area.h!=ctx->height){
-                if(ctx->texture)SDL_DestroyTexture(ctx->texture);
-                ctx->texture=SDL_CreateTexture(ui_renderer,SDL_PIXELFORMAT_RGBA32,
-                                              SDL_TEXTUREACCESS_STREAMING,area.w,area.h);
-                ctx->width=area.w;
-                ctx->height=area.h;
+            /* The decoder outputs RGBA bytes. Preserve the actual pitch,
+               including FFmpeg alignment, in a non-owning SDL surface. */
+            SDL_Surface *frame=SDL_CreateRGBSurfaceWithFormatFrom(
+                planes[0],area.w,area.h,32,strides[0],SDL_PIXELFORMAT_RGBA32);
+            if(!frame){
+                result=render_failure(p,"SDL frame surface");
+            }else{
+                SDL_Texture *next=SDL_CreateTextureFromSurface(ui_renderer,frame);
+                SDL_FreeSurface(frame);
+                if(!next){
+                    result=render_failure(p,"SDL frame texture");
+                }else{
+                    SDL_SetTextureBlendMode(next,SDL_BLENDMODE_NONE);
+                    if(ctx->texture)SDL_DestroyTexture(ctx->texture);
+                    ctx->texture=next;ctx->width=area.w;ctx->height=area.h;
+                }
             }
-            result=ctx->texture?SDL_UpdateTexture(ctx->texture,NULL,planes[0],strides[0]):-1;
-            if(result==0)p->first_frame=1;
         }
         Kit_UnlockPlayerVideoRawFrame(p->decoder);
     }
@@ -419,7 +437,10 @@ int mpv_render_context_render(mpv_render_context *ctx,const mpv_render_param *ar
         dst.w=(int)((int64_t)dst.h*ctx->width/ctx->height);
         dst.x=(1280-dst.w)/2;
     }
-    return SDL_RenderCopy(ui_renderer,ctx->texture,NULL,&dst);
+    if(SDL_RenderCopy(ui_renderer,ctx->texture,NULL,&dst)<0)
+        return render_failure(p,"SDL frame copy");
+    p->first_frame=1;
+    return 0;
 }
 
 void mpv_render_context_free(mpv_render_context *ctx){
