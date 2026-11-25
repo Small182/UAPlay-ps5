@@ -2411,6 +2411,9 @@ static void ps5_player_right_stick(SDL_GameController *pad,mpv_handle *player){
 }
 #endif
 
+#ifdef UAPLAY_PS5_SOFTWARE
+static int ps5_player_focus=1; /* rewind, pause, forward, settings, audio, subtitles, seek */
+#endif
 static void draw_player_controls(Paint *p,mpv_handle *player,const Movie *movie) {
     ui_theme_enabled=0; /* Video playback controls remain readable in both themes. */
     double pos=0,duration=0;
@@ -2441,6 +2444,9 @@ static void draw_player_controls(Paint *p,mpv_handle *player,const Movie *movie)
                   "L — Наступна серія",
 #endif
                   790,519,310);
+#ifdef UAPLAY_PS5_SOFTWARE
+    if(ps5_player_focus==6)box_alpha(p,115,554,1050,30,.22f,.49f,.91f,.75f,15);
+#endif
     box_alpha(p,126,566,1028,6,.34f,.39f,.44f,1.f,3);
     int filled=duration>0?(int)(1028.0*pos/duration):0;
     if(filled<0)filled=0;if(filled>1028)filled=1028;
@@ -2464,6 +2470,10 @@ static void draw_player_controls(Paint *p,mpv_handle *player,const Movie *movie)
                           "Параметри","Аудіо","Субтитри"};
     for(int i=0;i<6;i++){
         const int w=i==1?76:58,top=i==1?604:613;
+#ifdef UAPLAY_PS5_SOFTWARE
+        if(ps5_player_focus==i)
+            box_alpha(p,centers[i]-w/2-4,top-4,w+8,w+8,.28f,.62f,1.f,1.f,(w+8)/2);
+#endif
         box_alpha(p,centers[i]-w/2,top,w,w,.18f,.22f,.26f,.94f,w/2);
         text_center(p,icons[i],centers[i]-w/2,top+(w-28)/2,w,
                     i==0||i==2?p->font_small:p->font,.98f,.98f,.99f);
@@ -2522,6 +2532,11 @@ static void stick_arrow(SDL_GameController *pad,int player_mode,
     else if(!player_mode && (abs(ry)>deadzone || abs(rx)>deadzone))
         key=abs(ry)>=abs(rx)?(ry>0?SDLK_DOWN:SDLK_UP):
                               (rx>0?SDLK_RIGHT:SDLK_LEFT);
+#ifdef UAPLAY_PS5_SOFTWARE
+    /* Keep left stick seeking even while D-pad navigates the player panel. */
+    if(player_mode&&key==SDLK_LEFT)key=SDLK_F9;
+    if(player_mode&&key==SDLK_RIGHT)key=SDLK_F10;
+#endif
     Uint32 now=SDL_GetTicks();
     if(!key){*last_key=0;return;}
     Uint32 interval=(key==SDLK_PAGEUP || key==SDLK_PAGEDOWN)?500u:175u;
@@ -3073,6 +3088,10 @@ int main(void) {
                     case SDLK_DOWN:key=SDL_CONTROLLER_BUTTON_DPAD_DOWN;break;
                     case SDLK_PAGEUP:key=10001;break;
                     case SDLK_PAGEDOWN:key=10002;break;
+#ifdef UAPLAY_PS5_SOFTWARE
+                    case SDLK_F9:key=10003;break;
+                    case SDLK_F10:key=10004;break;
+#endif
                     case SDLK_LEFT:key=SDL_CONTROLLER_BUTTON_DPAD_LEFT;break;
                     case SDLK_RIGHT:key=SDL_CONTROLLER_BUTTON_DPAD_RIGHT;break;
                     case SDLK_x:key=SDL_CONTROLLER_BUTTON_X;break;
@@ -3344,7 +3363,10 @@ int main(void) {
                     }else if(ty<92 && tx<100)key=SDL_CONTROLLER_BUTTON_B;
                 }
             }
-            if(page==PLAYER && key>=0)controls_until=SDL_GetTicks()+3000;
+#ifdef UAPLAY_PS5_SOFTWARE
+            int player_panel_visible=page==PLAYER && SDL_GetTicks()<controls_until;
+#endif
+            if(page==PLAYER && key>=0)controls_until=SDL_GetTicks()+5000;
             if(key<0)continue;
             /* On DualSense OPTIONS is SDL START. It must open the main menu,
                not terminate the native title and leave the display black. */
@@ -3370,9 +3392,32 @@ int main(void) {
                 continue;
             }
             if(page==PLAYER){
+#ifdef UAPLAY_PS5_SOFTWARE
+                if(key==10003){seek(player,"-10");continue;}
+                if(key==10004){seek(player,"10");continue;}
+                if(tx<0 && (key==SDL_CONTROLLER_BUTTON_DPAD_LEFT ||
+                            key==SDL_CONTROLLER_BUTTON_DPAD_RIGHT ||
+                            key==SDL_CONTROLLER_BUTTON_DPAD_UP ||
+                            key==SDL_CONTROLLER_BUTTON_DPAD_DOWN)){
+                    if(!player_panel_visible){ps5_player_focus=1;continue;}
+                    if(key==SDL_CONTROLLER_BUTTON_DPAD_UP){ps5_player_focus=6;continue;}
+                    if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN){ps5_player_focus=1;continue;}
+                    int delta=key==SDL_CONTROLLER_BUTTON_DPAD_LEFT?-1:1;
+                    if(ps5_player_focus==6)seek(player,delta<0?"-10":"10");
+                    else ps5_player_focus=(ps5_player_focus+6+delta)%6;
+                    continue;
+                }
+                if(tx<0 && key==SDL_CONTROLLER_BUTTON_A && player_panel_visible){
+                    static const int actions[]={SDL_CONTROLLER_BUTTON_DPAD_LEFT,
+                        SDL_CONTROLLER_BUTTON_A,SDL_CONTROLLER_BUTTON_DPAD_RIGHT,
+                        SDL_CONTROLLER_BUTTON_BACK,SDL_CONTROLLER_BUTTON_Y,SDL_CONTROLLER_BUTTON_X,
+                        SDL_CONTROLLER_BUTTON_A};
+                    key=actions[ps5_player_focus];
+                }
+#endif
                 if(key==SDL_CONTROLLER_BUTTON_B){
                     double position=0;
-                    if (player && playing_movie.id>0 &&
+                    if (player && video_loaded && playing_movie.id>0 &&
                         mpv_get_property(player,"time-pos",MPV_FORMAT_DOUBLE,&position)>=0)
                         { /* Position belongs to a particular episode. */
                             if(active_episode_variant>=0 && player_return_page==EPISODES)
@@ -4372,6 +4417,7 @@ int main(void) {
                     }else if(uakino_resolve(&sources[source],url,sizeof(url),message,sizeof(message))){
                         snprintf(pending_subtitle,sizeof(pending_subtitle),"%s",uakino_resolved_subtitle());
                         playing_movie=movies[chosen];
+                        active_episode_variant=-1;
                         resume_at=library_progress(&playing_movie);
                         library_mark_watched(&playing_movie);
                         snprintf(playing_url,sizeof(playing_url),"%s",url);
@@ -4395,6 +4441,10 @@ int main(void) {
                        handles once per file rather than keeping stale GL
                        textures for the whole application session. */
                     text_cache_destroy();
+#ifdef UAPLAY_PS5_SOFTWARE
+                    video_loaded=0;video_started_at=SDL_GetTicks();
+                    ps5_player_focus=1;
+#endif
                 }
                 if(event->event_id==MPV_EVENT_FILE_LOADED && pending_subtitle[0]){
                     const char *args[]={"sub-add",pending_subtitle,"auto","Українські", "uk",NULL};
@@ -4402,12 +4452,14 @@ int main(void) {
                     pending_subtitle[0]=0;
                 }
                 if(event->event_id==MPV_EVENT_FILE_LOADED)video_loaded=1;
+#ifndef UAPLAY_PS5_SOFTWARE
                 if(event->event_id==MPV_EVENT_FILE_LOADED && resume_at>1){
                     char seconds[40];snprintf(seconds,sizeof(seconds),"%.1f",resume_at);
                     const char *args[]={"seek",seconds,"absolute",NULL};
                     mpv_command_async(player,0,args);
                     resume_at=0;
                 }
+#endif
                 if(event->event_id==MPV_EVENT_END_FILE && page==PLAYER){
                     mpv_event_end_file *end=(mpv_event_end_file*)event->data;
                     if(end && end->reason==MPV_END_FILE_REASON_ERROR){
@@ -4419,6 +4471,10 @@ int main(void) {
                         snprintf(message,sizeof(message),"Помилка відео: %s (%d)",reason,end->error);
                         page=player_return_page;
                     }else if(end && end->reason==MPV_END_FILE_REASON_EOF){
+#ifdef UAPLAY_PS5_SOFTWARE
+                        if(player_return_page==SOURCES&&playing_movie.id>0)
+                            library_set_progress(&playing_movie,0);
+#endif
                         if(player_return_page==EPISODES && active_episode_variant>=0)
                             library_mark_episode_completed(&playing_movie,
                                 episodes[active_episode_variant].season,
@@ -4439,6 +4495,25 @@ int main(void) {
                 }
             }
         }
+#ifdef UAPLAY_PS5_SOFTWARE
+        /* Resume only with a real frame and known length. Stale completed-film
+           positions must never seek to EOF. Keep existing history intact. */
+        if(page==PLAYER && video_loaded && resume_at>1){
+            double duration=0;
+            mpv_get_property(player,"duration",MPV_FORMAT_DOUBLE,&duration);
+            if(duration>0){
+                if(isfinite(resume_at)&&resume_at<duration-30){
+                    char seconds[40];snprintf(seconds,sizeof(seconds),"%.1f",resume_at);
+                    const char *args[]={"seek",seconds,"absolute",NULL};
+                    if(mpv_command_async(player,0,args)>=0)resume_at=0;
+                }else{
+                    resume_at=0;
+                    if(player_return_page==SOURCES&&playing_movie.id>0)
+                        library_set_progress(&playing_movie,0);
+                }
+            }else if(SDL_GetTicks()-video_started_at>15000)resume_at=0;
+        }
+#endif
         if(page!=PLAYER){pending_next_episode=-1;next_episode_request=-1;}
         if(page==PLAYER && pending_next_episode>=0 &&
            SDL_GetTicks()-next_episode_countdown_at>=NEXT_EPISODE_DELAY_MS){

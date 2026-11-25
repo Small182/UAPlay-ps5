@@ -120,7 +120,8 @@ struct mpv_handle {
     size_t frame_size,offsets[3];
     unsigned width,height,pitches[3],lines[3],serial,decoded,generation;
     unsigned ten_bit,two_planes,full_range,p010;
-    Uint32 playing_since;
+    Uint32 playing_since,opened_at;
+    libvlc_time_t last_video_time;
     char chroma[5];
     int active,started,loaded,volume;
     long open_serial;
@@ -301,7 +302,7 @@ static void stop(mpv_handle *p){
     }
     if(p->mp)libvlc_media_player_stop(p->mp);
     audio_clear(p);
-    p->playing_since=0;
+    p->playing_since=0;p->opened_at=0;p->last_video_time=0;
     p->loaded=p->started=0;
     __atomic_store_n(&hw_active,0,__ATOMIC_RELEASE);
     __atomic_store_n(&hw_failed,0,__ATOMIC_RELEASE);
@@ -400,7 +401,7 @@ int mpv_command_async(mpv_handle *p,unsigned long long userdata,const char **a){
         if(p->ua[0]){snprintf(opt,sizeof(opt),":http-user-agent=%s",p->ua);libvlc_media_add_option(m,opt);}
         if(p->referer[0]){snprintf(opt,sizeof(opt),":http-referrer=%s",p->referer);libvlc_media_add_option(m,opt);}
         libvlc_media_player_set_media(p->mp,m);libvlc_media_release(m);
-        p->active=1;snprintf(p->diag,sizeof(p->diag),"VLC opening");
+        p->active=1;p->opened_at=SDL_GetTicks();snprintf(p->diag,sizeof(p->diag),"VLC opening");
         audio_resume(p,0);
         int rc=libvlc_media_player_play(p->mp);
         if(rc<0)snprintf(p->error,sizeof(p->error),"libVLC: %s",libvlc_errmsg()?libvlc_errmsg():"unable to start playback");
@@ -409,9 +410,19 @@ int mpv_command_async(mpv_handle *p,unsigned long long userdata,const char **a){
     if(!strcmp(a[0],"stop")){stop(p);return 0;}
     if(!strcmp(a[0],"cycle")&&a[1]&&!strcmp(a[1],"pause")){libvlc_media_player_pause(p->mp);return 0;}
     if(!strcmp(a[0],"seek")&&a[1]){
-        libvlc_time_t t=(libvlc_time_t)(atof(a[1])*1000);
-        if(!a[2]||strcmp(a[2],"absolute"))t+=libvlc_media_player_get_time(p->mp);
-        libvlc_media_player_set_time(p->mp,t<0?0:t);return 0;
+        double seconds=strtod(a[1],NULL);
+        if(!isfinite(seconds)||fabs(seconds)>864000.0||!p->loaded||
+           !libvlc_media_player_is_seekable(p->mp))return -1;
+        libvlc_time_t t=(libvlc_time_t)(seconds*1000.0);
+        if(!a[2]||strncmp(a[2],"absolute",8)){
+            libvlc_time_t current=libvlc_media_player_get_time(p->mp);
+            if(current<0)return -1;
+            t+=current;
+        }
+        libvlc_time_t duration=libvlc_media_player_get_length(p->mp);
+        if(t<0)t=0;
+        if(duration>0&&t>=duration)t=duration>1000?duration-1000:0;
+        libvlc_media_player_set_time(p->mp,t);return 0;
     }
     if(!strcmp(a[0],"set")&&a[1]&&a[2])return mpv_set_property_string(p,a[1],a[2]);
     if(!strcmp(a[0],"sub-add")&&a[1])return libvlc_media_player_add_slave(p->mp,libvlc_media_slave_type_subtitle,a[1],1);
@@ -420,10 +431,17 @@ int mpv_command_async(mpv_handle *p,unsigned long long userdata,const char **a){
 mpv_event *mpv_wait_event(mpv_handle *p,double timeout){
     (void)timeout;static mpv_event e;static mpv_event_end_file end;
     e.event_id=MPV_EVENT_NONE;e.data=NULL;if(!p||!p->active)return &e;
+    libvlc_state_t state=libvlc_media_player_get_state(p->mp);
+    if((state==libvlc_Ended||state==libvlc_Error)&&!p->loaded &&
+       p->opened_at&&SDL_GetTicks()-p->opened_at>=1500 &&
+       !p->software_retry&&vlc_ps5_vdec_available())
+        __atomic_store_n(&hw_failed,1,__ATOMIC_RELEASE);
     if(__atomic_exchange_n(&hw_failed,0,__ATOMIC_ACQ_REL) && !p->software_retry){
         libvlc_media_t *old=libvlc_media_player_get_media(p->mp);
         char *url=old?libvlc_media_get_mrl(old):NULL;
-        libvlc_time_t pos=libvlc_media_player_get_time(p->mp);
+        libvlc_time_t pos=p->loaded?p->last_video_time:0;
+        libvlc_time_t length=libvlc_media_player_get_length(p->mp);
+        if(length>0&&pos>=length-30000)pos=0;
         if(url){
             stop(p);
             p->software_retry=1;
@@ -439,7 +457,7 @@ mpv_event *mpv_wait_event(mpv_handle *p,double timeout){
                 if(p->ua[0]){snprintf(opt,sizeof(opt),":http-user-agent=%s",p->ua);libvlc_media_add_option(m,opt);}
                 if(p->referer[0]){snprintf(opt,sizeof(opt),":http-referrer=%s",p->referer);libvlc_media_add_option(m,opt);}
                 libvlc_media_player_set_media(p->mp,m);libvlc_media_release(m);
-                p->active=1;
+                p->active=1;p->opened_at=SDL_GetTicks();
                 snprintf(p->diag,sizeof(p->diag),"VLC hardware failed; software retry");
                 audio_resume(p,0);
                 if(libvlc_media_player_play(p->mp)==0)return &e;
@@ -451,13 +469,27 @@ mpv_event *mpv_wait_event(mpv_handle *p,double timeout){
         }
     }
     libvlc_state_t s=libvlc_media_player_get_state(p->mp);
-    if(p->resume_at>0&&s==libvlc_Playing&&libvlc_media_player_is_seekable(p->mp)){
-        libvlc_media_player_set_time(p->mp,p->resume_at);p->resume_at=0;
+    if(p->loaded&&s==libvlc_Playing){
+        libvlc_time_t now=libvlc_media_player_get_time(p->mp);
+        if(now>=0)p->last_video_time=now;
+        if(p->resume_at>0&&libvlc_media_player_is_seekable(p->mp)){
+            libvlc_time_t length=libvlc_media_player_get_length(p->mp);
+            if(length>0&&p->resume_at<length-30000)
+                libvlc_media_player_set_time(p->mp,p->resume_at);
+            p->resume_at=0;
+        }
     }
     if(!p->started){p->started=1;e.event_id=MPV_EVENT_START_FILE;return &e;}
     if(s==libvlc_Error||s==libvlc_Ended){
-        if(s==libvlc_Error && !p->error[0])snprintf(p->error,sizeof(p->error),"libVLC media player error");
-        p->active=0;end.reason=s==libvlc_Error?MPV_END_FILE_REASON_ERROR:MPV_END_FILE_REASON_EOF;end.error=s==libvlc_Error?-1:0;
+        if(!p->loaded&&p->opened_at&&SDL_GetTicks()-p->opened_at<1500)return &e;
+        libvlc_time_t length=libvlc_media_player_get_length(p->mp);
+        int premature=!p->loaded||(length>30000&&p->last_video_time+15000<length);
+        int failed=s==libvlc_Error||premature;
+        if(failed&&!p->error[0])
+            snprintf(p->error,sizeof(p->error),"VLC %s: %s at %.1fs / %.1fs, %u frames",
+                p->software_retry?"SW":"HW/auto",s==libvlc_Error?"error":"early EOF",
+                p->last_video_time/1000.0,length/1000.0,p->decoded);
+        p->active=0;end.reason=failed?MPV_END_FILE_REASON_ERROR:MPV_END_FILE_REASON_EOF;end.error=failed?-1:0;
         e.event_id=MPV_EVENT_END_FILE;e.data=&end;return &e;
     }
     if(!p->loaded){
