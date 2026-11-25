@@ -2435,6 +2435,9 @@ static void draw_player_controls(Paint *p,mpv_handle *player,const Movie *movie)
     char playback_title[256];
     snprintf(playback_title,sizeof(playback_title),"Відтворення · %s",movie && movie->title[0]?movie->title:"UAPlay");
     text_tiny(p,playback_title,35,519,740);
+#ifdef UAPLAY_USE_VLC_COMPAT
+    text_tiny(p,ps5_vlc_picture_info(player),1000,541,248);
+#endif
     if(active_episode_variant>=0 &&
        catalog_next_episode(episodes,episode_count,active_episode_variant)>=0)
         text_tiny(p,

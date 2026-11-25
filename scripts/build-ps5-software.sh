@@ -51,6 +51,12 @@ PS5_PAYLOAD_SDK="$sdk" "$sdk/bin/prospero-clang" -std=c11 -O2 -fPIC -c \
     -o "$app/vlc-stubs/libSceVideodec2.so" "$app/vlc-stubs/videodec2.o"
 cp "$vlc_upstream/ps5/modules/ps5http.c" "$app/src/vlc_ps5http.c"
 ln -s "$vlc_work/src/vlc-3.0.24/include" "$app/vlc-headers"
+# Expose only the cached FFmpeg headers needed by the video scaler.
+mkdir -p "$app/vlc-video-headers"
+for inc in libswscale libavutil; do
+    test -d "$vlc_work/prefix-ps5/include/$inc"
+    ln -s "$vlc_work/prefix-ps5/include/$inc" "$app/vlc-video-headers/$inc"
+done
 export UAPLAY_VLC_WORK="$vlc_work"
 export UAPLAY_VLC_UPSTREAM="$vlc_upstream"
 cp "$project/ps5/posix_compat.c" "$app/src/posix_compat.c"
@@ -83,7 +89,7 @@ path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encod
 PY
     make libc
     APP_DEFINITIONS='__PS5__ SDL_MAIN_HANDLED UAPLAY_PS5_SOFTWARE UAPLAY_USE_VLC_COMPAT' \
-    APP_INCLUDE_PATHS='vlc-headers' \
+    APP_INCLUDE_PATHS='vlc-headers vlc-video-headers' \
     APP_IMPORT_STUBS='vlc-stubs/libSceVideodec2.so' \
     PACBREW_PACKAGES='sdl2 SDL2_ttf SDL2_image libcurl' \
     bash tools/build.sh Folder

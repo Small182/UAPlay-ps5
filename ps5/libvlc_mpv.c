@@ -11,6 +11,8 @@
 #include <stdarg.h>
 #include <SDL.h>
 #include <vlc/vlc.h>
+#include <libswscale/swscale.h>
+#include <libavutil/pixfmt.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -129,7 +131,7 @@ struct mpv_handle {
     unsigned char *frame,*ready_frame;
     size_t frame_size,offsets[3];
     unsigned width,height,pitches[3],lines[3],serial,decoded,generation;
-    unsigned ten_bit,two_planes,full_range,p010;
+    unsigned ten_bit,two_planes,full_range,p010,frame_hw;
     Uint32 playing_since,opened_at,stats_at;
     unsigned setup_count,display_count,setup_ok,setup_fail;
     int video_tracks,core_decoded,core_lost,core_shown;
@@ -148,6 +150,7 @@ struct mpv_render_context {
     unsigned width,height,serial,generation;
     uint32_t *rgb;
     size_t rgb_capacity;
+    struct SwsContext *scaler;
 };
 
 static void frame_free(void *ptr){
@@ -161,7 +164,7 @@ static void *frame_alloc(size_t size){
 static void video_buffers_free(mpv_handle *p){
     frame_free(p->frame);frame_free(p->ready_frame);
     p->frame=p->ready_frame=NULL;p->frame_size=0;
-    p->serial=p->decoded=0;
+    p->serial=p->decoded=0;p->frame_hw=0;
 }
 static unsigned video_setup(void **opaque,char *chroma,unsigned *w,unsigned *h,
                             unsigned *pitch,unsigned *lines){
@@ -215,6 +218,7 @@ static void video_unlock(void *opaque,void *picture,void *const *planes){
         /* VLC has finished Prepare: the frame is valid even if Display is
            skipped by its clock. Swap, don't copy or wait on Display. */
         unsigned char *prev=p->ready_frame;p->ready_frame=p->frame;p->frame=prev;
+        p->frame_hw=__atomic_load_n(&hw_active,__ATOMIC_ACQUIRE)>0;
         p->decoded++;p->serial++;
     }
     SDL_UnlockMutex(p->lock);
@@ -589,6 +593,16 @@ int mpv_render_context_create(mpv_render_context **out,mpv_handle *p,const mpv_r
     (void)args;if(!out||!p){init_status("render context","invalid arguments");return -1;}
     *out=calloc(1,sizeof(**out));if(!*out){init_status("render context","out of memory");return -1;}(*out)->p=p;return 0;
 }
+const char *ps5_vlc_picture_info(mpv_handle *p){
+    static char info[96];
+    if(!p)return "";
+    SDL_LockMutex(p->lock);
+    if(p->serial)snprintf(info,sizeof(info),"%s  %ux%u  %u-bit",
+        p->frame_hw?"HW":"SW",p->width,p->height,p->ten_bit?10u:8u);
+    else snprintf(info,sizeof(info),"VLC");
+    SDL_UnlockMutex(p->lock);
+    return info;
+}
 static unsigned clip8(int v){return v<0?0u:v>255?255u:(unsigned)v;}
 static unsigned sample8(const unsigned char *row,unsigned x,int ten,int p010){
     if(!ten)return row[x];
@@ -615,13 +629,41 @@ static void convert_yuv(mpv_handle *p,uint32_t *rgb,unsigned ow,unsigned oh){
         }
     }
 }
+/* Use FFmpeg's SIMD-capable scaler on the original YUV planes. Keep the
+ * earlier converter as a compatibility fallback if swscale rejects a format. */
+static void scale_picture(mpv_render_context *c,unsigned w,unsigned h){
+    mpv_handle *p=c->p;
+    enum AVPixelFormat fmt=p->two_planes?
+        (p->ten_bit?AV_PIX_FMT_P010LE:AV_PIX_FMT_NV12):
+        (p->ten_bit?AV_PIX_FMT_YUV420P10LE:AV_PIX_FMT_YUV420P);
+    c->scaler=sws_getCachedContext(c->scaler,p->width,p->height,fmt,
+        w,h,AV_PIX_FMT_BGRA,SWS_BILINEAR|SWS_ACCURATE_RND,NULL,NULL,NULL);
+    if(c->scaler){
+        const int *coeff=sws_getCoefficients(p->height>=720?SWS_CS_ITU709:SWS_CS_ITU601);
+        sws_setColorspaceDetails(c->scaler,coeff,p->full_range,coeff,1,0,1<<16,1<<16);
+        const uint8_t *src[4]={p->ready_frame,p->ready_frame+p->offsets[1],
+            p->two_planes?NULL:p->ready_frame+p->offsets[2],NULL};
+        int stride[4]={(int)p->pitches[0],(int)p->pitches[1],(int)p->pitches[2],0};
+        uint8_t *dst[4]={(uint8_t*)c->rgb,NULL,NULL,NULL};
+        int out_stride[4]={(int)w*4,0,0,0};
+        if(sws_scale(c->scaler,src,stride,0,p->height,dst,out_stride)==(int)h)return;
+    }
+    convert_yuv(p,c->rgb,w,h);
+}
 int mpv_render_context_render(mpv_render_context *c,const mpv_render_param *args){
     (void)args;if(!c||!ui_renderer)return -1;mpv_handle *p=c->p;
     SDL_SetRenderDrawColor(ui_renderer,0,0,0,255);SDL_RenderClear(ui_renderer);
     SDL_LockMutex(p->lock);
     if(c->generation!=p->generation){if(c->texture)SDL_DestroyTexture(c->texture);c->texture=NULL;c->serial=0;c->generation=p->generation;}
     if(p->ready_frame&&p->serial&&p->serial!=c->serial){
-        double scale=fmin(1.0,fmin(1280.0/p->width,720.0/p->height));
+        /* The UI uses 1280x720 logical coordinates, not output pixels.
+         * Keep source resolution up to native 1080p; avoid a 720p round trip. */
+        int out_w=1920,out_h=1080;
+        if(SDL_GetRendererOutputSize(ui_renderer,&out_w,&out_h)!=0 || out_w<1 || out_h<1){
+            out_w=1920;out_h=1080;
+        }
+        if(out_w>1920)out_w=1920;if(out_h>1080)out_h=1080;
+        double scale=fmin(1.0,fmin((double)out_w/p->width,(double)out_h/p->height));
         unsigned w=(unsigned)(p->width*scale),h=(unsigned)(p->height*scale);
         if(!w||!h){SDL_UnlockMutex(p->lock);return -1;}
         size_t pixels=(size_t)w*h;
@@ -630,7 +672,7 @@ int mpv_render_context_render(mpv_render_context *c,const mpv_render_param *args
             if(!next){snprintf(p->error,sizeof(p->error),"VLC RGB buffer allocation failed");SDL_UnlockMutex(p->lock);return -1;}
             c->rgb=next;c->rgb_capacity=pixels;
         }
-        convert_yuv(p,c->rgb,w,h);
+        scale_picture(c,w,h);
         if(!c->texture||c->width!=w||c->height!=h){
             if(c->texture)SDL_DestroyTexture(c->texture);
             c->texture=SDL_CreateTexture(ui_renderer,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_STREAMING,w,h);
@@ -645,6 +687,9 @@ int mpv_render_context_render(mpv_render_context *c,const mpv_render_param *args
         }
         if(!c->texture){snprintf(p->error,sizeof(p->error),"VLC SDL texture: %s",SDL_GetError());SDL_UnlockMutex(p->lock);return -1;}
         SDL_SetTextureBlendMode(c->texture,SDL_BLENDMODE_NONE);
+#if SDL_VERSION_ATLEAST(2,0,12)
+        SDL_SetTextureScaleMode(c->texture,SDL_ScaleModeLinear);
+#endif
         c->serial=p->serial;
         if(c->serial==1){
             unsigned luma=p->ready_frame[0];
@@ -659,7 +704,7 @@ int mpv_render_context_render(mpv_render_context *c,const mpv_render_param *args
     SDL_Rect dst={0,0,(int)(c->width*scale),(int)(c->height*scale)};dst.x=(1280-dst.w)/2;dst.y=(720-dst.h)/2;
     return SDL_RenderCopy(ui_renderer,c->texture,NULL,&dst);
 }
-void mpv_render_context_free(mpv_render_context *c){if(c){if(c->texture)SDL_DestroyTexture(c->texture);free(c->rgb);free(c);}}
+void mpv_render_context_free(mpv_render_context *c){if(c){if(c->texture)SDL_DestroyTexture(c->texture);sws_freeContext(c->scaler);free(c->rgb);free(c);}}
 int ps5_kitchen_tracks(mpv_handle *p,int subtitles,MediaTrack *out,int max){
     if(!p||!p->mp||!out)return 0;
     libvlc_track_description_t *head=subtitles?libvlc_video_get_spu_description(p->mp):libvlc_audio_get_track_description(p->mp);
