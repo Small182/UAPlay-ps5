@@ -1090,8 +1090,22 @@ static void box_alpha(Paint *p,int x,int y,int w,int h,float r,float g,float b,f
     if(ui_theme_enabled && ui_light_theme && p->tex==p->solid_tex && !ui_gradient_pass){
         float top=fmaxf(r,fmaxf(g,b)),bottom=fminf(r,fminf(g,b));
         if(top<=.55f && top-bottom<=.22f){
+#ifdef UAPLAY_PS5_SOFTWARE
+            /* UAPlay-web light palette: --bg #e8edf0, --panel #f8fafb,
+               --panel2 #e3e9ec, header #f5f7f9. */
+            if(w==1280 && h==720)
+                {r=.910f;g=.929f;b=.941f;}
+            else if(w>=1200 && y==0 && h<=92)
+                {r=.961f;g=.969f;b=.976f;}
+            else if(r<.125f)
+                {r=.973f;g=.980f;b=.984f;}
+            else if(r<.22f)
+                {r=.890f;g=.914f;b=.925f;}
+            else {r=.847f;g=.902f;b=.922f;}
+#else
             float v=.2126f*r+.7152f*g+.0722f*b;
             r=g=b=fminf(.992f,.93f+.24f*v);
+#endif
         }else{r=1.f-r;g=1.f-g;b=1.f-b;}
     }
 #ifndef UAPLAY_PS5_SOFTWARE
@@ -1202,7 +1216,15 @@ static void text_color(Paint *p,const char *str,int x,int y,int limit,
         float top=fmaxf(r,fmaxf(g,b)),bottom=fminf(r,fminf(g,b));
         if(top-bottom<=.22f){
             float tone=.2126f*r+.7152f*g+.0722f*b;
+#ifdef UAPLAY_PS5_SOFTWARE
+            if(ui_light_theme && tone>=.90f)
+                {r=.090f;g=.141f;b=.180f;} /* --text: #17242e */
+            else if(ui_light_theme && tone>=.65f)
+                {r=.275f;g=.349f;b=.396f;} /* --muted: #465965 */
+            else r=g=b=ui_light_theme?1.f-tone:tone;
+#else
             r=g=b=ui_light_theme?1.f-tone:tone;
+#endif
         }else if(ui_light_theme){r=1.f-r;g=1.f-g;b=1.f-b;}
     }
     TTF_Font *font=choose_font(p,str);
