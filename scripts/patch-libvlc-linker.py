@@ -24,11 +24,25 @@ s = s.replace(marker, '''    vlc_libs=()
         esac
     done < "$UAPLAY_VLC_WORK/static-ps5/link.rsp"
     vlc_libs+=("$UAPLAY_VLC_WORK/prefix-ps5/lib/libps5compat.a")
-    link_inputs+=(--start-group "${vlc_libs[@]}" "${pacbrew_libs[@]}" --end-group)''')
+    # VLC's adaptive streaming and Matroska plugins are C++, unlike the old
+    # Kitchensink adapter. Use the target SDK runtime, never the host libc++.
+    cpp_libs=()
+    for lib in libc++.a libc++abi.a libunwind.a; do
+        file="$sdk_root/target/lib/$lib"
+        test -s "$file" || { echo "Missing PS5 C++ runtime: $file" >&2; exit 2; }
+        cpp_libs+=("$file")
+    done
+    builtins="$("$target_compiler" --print-resource-dir)/lib/linux/libclang_rt.builtins-x86_64.a"
+    test -s "$builtins" || { echo "Missing clang compiler runtime: $builtins" >&2; exit 2; }
+    cpp_libs+=("$builtins")
+    if [[ -f "$sdk_root/target/lib/libps5platform.a" ]]; then
+        cpp_libs+=("$sdk_root/target/lib/libps5platform.a")
+    fi
+    link_inputs+=(--start-group "${vlc_libs[@]}" "${pacbrew_libs[@]}" "${cpp_libs[@]}" --end-group)''')
 marker = 'wrap_options=()\n'
 if s.count(marker) != 1:
     raise SystemExit("Expected template wrapper hook")
-s = s.replace(marker, marker + '''wrap_options+=(--wrap=mmap --wrap=munmap --wrap=geteuid --wrap=getegid -u vlc_static_modules)
+s = s.replace(marker, marker + '''wrap_options+=(--error-limit=0 --exclude-libs=ALL --wrap=mmap --wrap=munmap --wrap=geteuid --wrap=getegid -u vlc_static_modules)
 # Reuse VLC's console compatibility symbol mappings, except for resolver
 # calls already implemented by UAPlay's console_curl.c.
 while IFS= read -r name; do
