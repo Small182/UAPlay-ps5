@@ -1720,7 +1720,7 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
         press_preview(p,887,17,157,47,15);
         box_alpha(p,1058,17,53,47,.13f,.16f,.19f,1.f,15);
         if(focused==6)selection_frame(p,1058,17,53,47);
-        gear_icon(p,1085,40,.13f,.16f,.19f);
+        gear_icon(p,1084,40,.13f,.16f,.19f);
         press_preview(p,1058,17,53,47,15);
         time_t now=time(NULL);
         struct tm *local=localtime(&now);
@@ -1807,9 +1807,9 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
             }
             if(ui_category==12){
                 if(catalog_hero_focus==19)
-                    selection_frame(p,982,101,266,47);
+                    selection_frame(p,514,614,252,42);
                 button(p,clear_history_confirm?"Підтвердити очищення":
-                       "Очистити історію",982,101,266,47,0);
+                       "Очистити історію",514,614,252,42,0);
             }
             if(!n){
                 text_center_button(p,"Тут нічого немає",UI_EDGE,305,1216,110,
@@ -1817,11 +1817,13 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
             }
             const int start=chosen/12*12;
             for(int i=start;i<n && i<start+12;i++){
-                int k=i-start,x=54+k%6*201,y=162+k/6*245;
+                int k=i-start,x=54+k%6*201,y=162+k/6*(ui_category==12?224:245);
+                int poster_h=ui_category==12?184:206;
+                int poster_w=ui_category==12?123:138;
                 if(i==chosen && catalog_hero_focus==0)
-                    selection_frame(p,x,y,138,206);
-                poster(p,&movies[i],x,y,138,206,&poster_budget);
-                card_title(p,movies[i].title,x,y+209,166);
+                    selection_frame(p,x,y,poster_w,poster_h);
+                poster(p,&movies[i],x,y,poster_w,poster_h,&poster_budget);
+                card_title(p,movies[i].title,x,y+poster_h+3,166);
             }
         }else if(expanded_catalog){
             headline(p,heading,UI_EDGE,97,960);
@@ -2173,14 +2175,14 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
         const Movie *selected=&movies[chosen];
         if(selected->series && selected->details_state>0 &&
            selected->season_count>0 && selected->episode_count>0)
-            snprintf(tag,sizeof(tag),"%s  ·  Серіал  ·  Сезонів: %d  ·  Серій: %d",
+            snprintf(tag,sizeof(tag),"%s  ·  Сезонів: %d  ·  Серій: %d",
                      selected->year,selected->season_count,selected->episode_count);
         else if(!selected->series && selected->details_state>0 &&
                 selected->runtime_minutes>0){
             if(selected->runtime_minutes<60)
-                snprintf(tag,sizeof(tag),"%s  ·  Фільм  ·  %d хв",
+                snprintf(tag,sizeof(tag),"%s  ·  %d хв",
                          selected->year,selected->runtime_minutes);
-            else snprintf(tag,sizeof(tag),"%s  ·  Фільм  ·  %d год %02d хв",
+            else snprintf(tag,sizeof(tag),"%s  ·  %d год %02d хв",
                           selected->year,selected->runtime_minutes/60,
                           selected->runtime_minutes%60);
         }else snprintf(tag,sizeof(tag),"%s  ·  %s",selected->year,
@@ -3124,16 +3126,17 @@ int main(void) {
                                 catalog_hero_focus=16+tab;
                                 continue;
                             }
-                            if(category==12 && tx>=982 && tx<1248){
-                                catalog_hero_focus=19;
-                                key=SDL_CONTROLLER_BUTTON_A;
-                            }
+                        }
+                        if(category==12 && ty>=614 && ty<656 && tx>=514 && tx<766){
+                            catalog_hero_focus=19;
+                            key=SDL_CONTROLLER_BUTTON_A;
                         }
                         if(ty>=162 && ty<613 && tx>=54){
-                            int col=(tx-54)/201,row=(ty-162)/245;
+                            int step=category==12?224:245;
+                            int col=(tx-54)/201,row=(ty-162)/step;
                             int index=chosen/12*12+row*6+col;
-                            if(col<6 && row<2 && index<n && (tx-54)%201<138 &&
-                               (ty-162)%245<206){
+                            if(col<6 && row<2 && index<n && (tx-54)%201<(category==12?123:138) &&
+                               (ty-162)%step<(category==12?184:206)){
                                 chosen=index;
                                 catalog_hero_focus=0;
                                 clear_history_confirm=0;
@@ -4013,8 +4016,13 @@ int main(void) {
                            catalog_hero_focus<18)
                             catalog_hero_focus++;
                         if(key==SDL_CONTROLLER_BUTTON_DPAD_UP)catalog_hero_focus=11;
-                        if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN && n)
-                            catalog_hero_focus=0;
+                        if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN){
+                            if(n)catalog_hero_focus=0;
+                            else if(category==12)catalog_hero_focus=19;
+                        }
+                    }else if(catalog_hero_focus==19 && category==12){
+                        if(key==SDL_CONTROLLER_BUTTON_DPAD_UP)
+                            catalog_hero_focus=n?0:17;
                     }else if(((catalog_hero_focus>=5 && catalog_hero_focus<=11) || catalog_hero_focus==IPTV_TAB_FOCUS)){
                         catalog_hero_focus=header_focus_step(catalog_hero_focus,key);
                         if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN)
@@ -4028,6 +4036,7 @@ int main(void) {
                         }
                         if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN){
                             if(chosen+6<n)chosen+=6;
+                            else if(category==12)catalog_hero_focus=19;
                             else if(!n)catalog_hero_focus=focused_subsection(category);
                         }
                     }
