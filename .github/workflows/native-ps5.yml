@@ -3,7 +3,7 @@ name: UAPlay PS5 native Switch main 0.5.10 UI port
 on:
   workflow_dispatch:
   push:
-    branches: [native-ps5, fw13-exfat, fw13-ui-fixes-sync, fw13-native-network-v0510, fw13-main-0510-ui]
+    branches: [native-ps5, fw13-exfat, fw13-ui-fixes-sync, fw13-native-network-v0510, fw13-main-0510-ui, fw13-web-api-native]
     paths:
       - 'source/**'
       - 'ps5/**'
@@ -51,6 +51,10 @@ jobs:
         env:
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
         run: bash scripts/prepare-tmdb-key.sh
+      - name: Configure optional UAPlay-web catalogue API
+        env:
+          UAPLAY_WEB_API_URL: ${{ vars.UAPLAY_WEB_API_URL }}
+        run: bash scripts/prepare-web-api.sh
       - name: Cross-compile the native PS5 UAPlay title
         run: bash scripts/build-ps5-software.sh
       - name: Verify and archive the native title folder
