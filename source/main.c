@@ -3465,18 +3465,32 @@ int main(void) {
                     }
                     else if(ty>=UI_FOOTER_TOP)key=SDL_CONTROLLER_BUTTON_B;
                 }else if(page==TRACK_PICKER){
-                    int slot=(ty-UI_ROW_Y)/UI_ROW_STEP;
+                    int slot=(ty-164)/57;
                     int new_track=selected_track/UI_ROWS*UI_ROWS+slot;
-                    if(ty>=UI_ROW_Y && (ty-UI_ROW_Y)%UI_ROW_STEP<UI_ROW_HEIGHT &&
-                       slot>=0 && slot<UI_ROWS && new_track<track_count){
+                    if(tx>=840 && tx<1228 && ty>=164 &&
+                       (ty-164)%57<50 && slot>=0 &&
+                       slot<UI_ROWS && new_track<track_count){
                         selected_track=new_track;key=SDL_CONTROLLER_BUTTON_A;
-                    }else if(ty<92 && tx<100)key=SDL_CONTROLLER_BUTTON_B;
+                    }else if(tx<824 || ty<149)key=SDL_CONTROLLER_BUTTON_B;
                 }else if(page==VIDEO_SETTINGS){
-                    int slot=(ty-132)/68;
-                    if(ty>=132 && (ty-132)%68<60 && slot>=0 && slot<VIDEO_OPTION_COUNT){
-                        selected_video_option=slot;
-                        key=tx<640?SDL_CONTROLLER_BUTTON_DPAD_LEFT:SDL_CONTROLLER_BUTTON_DPAD_RIGHT;
-                    }else if(ty<92 && tx<100)key=SDL_CONTROLLER_BUTTON_B;
+                    if(!video_settings_from_menu){
+                        int slot=(ty-163)/72;
+                        if(tx>=839 && tx<1228 && ty>=163 &&
+                           (ty-163)%72<63 && slot>=0 &&
+                           slot<VIDEO_OPTION_COUNT){
+                            selected_video_option=slot;
+                            key=tx<1060?SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+                                        SDL_CONTROLLER_BUTTON_DPAD_RIGHT;
+                        }else if(tx<824 || ty<150)key=SDL_CONTROLLER_BUTTON_B;
+                    }else{
+                        int slot=(ty-132)/68;
+                        if(ty>=132 && (ty-132)%68<60 &&
+                           slot>=0 && slot<VIDEO_OPTION_COUNT){
+                            selected_video_option=slot;
+                            key=tx<640?SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+                                        SDL_CONTROLLER_BUTTON_DPAD_RIGHT;
+                        }else if(ty<92 && tx<100)key=SDL_CONTROLLER_BUTTON_B;
+                    }
                 }else if(page==SETTINGS || page==APPEARANCE){
                     int first=page==SETTINGS?107:117;
                     int step=page==SETTINGS?99:119;
