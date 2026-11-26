@@ -2087,8 +2087,14 @@ static void draw_content(Paint *p,Page page,Movie *movies,int n,int chosen,
     if (page==CATALOG || page==IPTV_CHANNELS) {
         if(page==CATALOG && ui_search_query[0]){
             screen_header(p,TR("Пошук","Search"),NULL);
+#ifdef UAPLAY_PS5_SOFTWARE
+            if(catalog_hero_focus==5)selection_frame(p,32,98,1000,46);
+            ui_button_depth((SDL_Rect){32,98,1000,46},14,
+                            ui_rgb(ui_light_theme?0xe0e7ef:0x28343e,255),0);
+#else
             box_alpha(p,32,98,1000,46,.13f,.16f,.19f,1.f,14);
             if(catalog_hero_focus==5)selection_frame(p,32,98,1000,46);
+#endif
             search_icon(p,58,121,.13f,.16f,.19f);
 #ifdef UAPLAY_PS5_SOFTWARE
             ui_header_left(p,ui_search_query,88,925,121,p->font,ui_fg());
@@ -3219,7 +3225,12 @@ static int keyboard(char *value,size_t size) {
         headline(p,keyboard_url_mode?TR("UAPlay-web — домен Worker",
                                              "UAPlay-web — Worker hostname"):
                    TR("Пошук — введіть назву","Search — enter a title"),55,48,1100);
+#ifdef UAPLAY_PS5_SOFTWARE
+        ui_button_depth((SDL_Rect){70,108,1140,72},16,
+                        ui_rgb(ui_light_theme?0xe0e7ef:0x28343e,255),0);
+#else
         box_alpha(p,70,108,1140,72,.11f,.16f,.20f,1.f,16);
+#endif
         text(p,value[0]?value:(keyboard_url_mode?
                  "example.workers.dev":"Введіть назву фільму або серіалу…"),91,130,1098);
         for(int r=0;r<3;r++){
