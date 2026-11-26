@@ -738,6 +738,10 @@ typedef struct {
     TTF_Font *font_big;
     TTF_Font *font_small;
     TTF_Font *font_tiny;
+#ifdef UAPLAY_PS5_SOFTWARE
+    TTF_Font *font_label,*font_card,*font_brand,*font_clock;
+    int web_font_faces;
+#endif
     TTF_Font *scripts[7];
     TTF_Font *scripts_small[7];
     TTF_Font *scripts_big[7];
@@ -766,7 +770,12 @@ static TTF_Font *choose_font(Paint *p,const char *s){
                 cp>=0x0600 && cp<=0x06FF?5:
                 cp>=0x0E00 && cp<=0x0E7F?6:-1;
         if(idx>=0){
-            TTF_Font *fallback=p->font==p->font_big?p->scripts_big[idx]:
+            TTF_Font *fallback=
+#ifdef UAPLAY_PS5_SOFTWARE
+                (p->font==p->font_brand||p->font==p->font_clock)?p->scripts_big[idx]:
+                (p->font==p->font_card||p->font==p->font_label)?p->scripts_small[idx]:
+#endif
+                p->font==p->font_big?p->scripts_big[idx]:
                 p->font==p->font_small?p->scripts_small[idx]:
                 p->font==p->font_tiny?p->scripts_tiny[idx]:p->scripts[idx];
             if(fallback)return fallback;
@@ -1028,10 +1037,24 @@ static int paint_init(Paint *p) {
 #ifdef UAPLAY_PS5_SOFTWARE
     /* Supersample glyph masks at 1.5x so native 1080p output gets crisp
        typography despite the UI retaining a stable 1280x720 coordinate grid. */
-    p->font=TTF_OpenFont(UAPLAY_ASSET("InterVariable.ttf"),33);
-    p->font_big=TTF_OpenFont(UAPLAY_ASSET("InterVariable.ttf"),47);
-    p->font_small=TTF_OpenFont(UAPLAY_ASSET("InterVariable.ttf"),29);
-    p->font_tiny=TTF_OpenFont(UAPLAY_ASSET("InterVariable.ttf"),23);
+    /* Same hierarchy as UAPlay-web: real static weight instances, no
+       synthetic bold. Logical layout and 1.5x raster scale stay unchanged. */
+    p->font=TTF_OpenFont(UAPLAY_ASSET("UAPlayUI-400.ttf"),33);
+    p->font_big=TTF_OpenFont(UAPLAY_ASSET("UAPlayUI-700.ttf"),47);
+    p->font_small=TTF_OpenFont(UAPLAY_ASSET("UAPlayUI-400.ttf"),29);
+    p->font_tiny=TTF_OpenFont(UAPLAY_ASSET("UAPlayUI-400.ttf"),23);
+    p->font_label=TTF_OpenFont(UAPLAY_ASSET("UAPlayUI-580.ttf"),26);
+    p->font_card=TTF_OpenFont(UAPLAY_ASSET("UAPlayUI-550.ttf"),27);
+    p->font_brand=TTF_OpenFont(UAPLAY_ASSET("UAPlayUI-740.ttf"),47);
+    p->font_clock=TTF_OpenFont(UAPLAY_ASSET("UAPlayUI-550.ttf"),45);
+    p->web_font_faces=p->font&&p->font_big&&p->font_small&&p->font_tiny&&
+        p->font_label&&p->font_card&&p->font_brand&&p->font_clock;
+    /* Keep manual builds usable even without generated font instances. */
+    TTF_Font **faces[]={&p->font,&p->font_big,&p->font_small,&p->font_tiny,
+        &p->font_label,&p->font_card,&p->font_brand,&p->font_clock};
+    const int sizes[]={33,47,29,23,26,27,47,45};
+    for(int j=0;j<8;j++)if(!*faces[j])*faces[j]=TTF_OpenFont(UAPLAY_ASSET("InterVariable.ttf"),sizes[j]);
+    if(!p->web_font_faces&&p->font_big)TTF_SetFontStyle(p->font_big,TTF_STYLE_BOLD);
 #else
     p->font=TTF_OpenFont(UAPLAY_ASSET("InterVariable.ttf"),22);
     p->font_big=TTF_OpenFont(UAPLAY_ASSET("InterVariable.ttf"),31);
@@ -1054,8 +1077,8 @@ static int paint_init(Paint *p) {
 #endif
     }
 #ifdef UAPLAY_PS5_SOFTWARE
-    if(p->font_big)TTF_SetFontStyle(p->font_big,TTF_STYLE_BOLD);
-    TTF_Font *main_fonts[]={p->font,p->font_big,p->font_small,p->font_tiny};
+    TTF_Font *main_fonts[]={p->font,p->font_big,p->font_small,p->font_tiny,
+        p->font_label,p->font_card,p->font_brand,p->font_clock};
     for(unsigned j=0;j<sizeof(main_fonts)/sizeof(main_fonts[0]);j++)
         if(main_fonts[j])TTF_SetFontHinting(main_fonts[j],TTF_HINTING_LIGHT);
     for(int j=0;j<7;j++){
@@ -1384,7 +1407,11 @@ static void summary(Paint *p,const char *description,int x,int y,int width){
     wrapped(p,description,x,y,width,3,28,p->font_small,.72f,.77f,.82f);
 }
 static void card_title(Paint *p,const char *title,int x,int y,int width){
+#ifdef UAPLAY_PS5_SOFTWARE
+    wrapped(p,title,x,y,width,2,24,p->font_card?p->font_card:p->font_small,.95f,.96f,.98f);
+#else
     wrapped(p,title,x,y,width,2,24,p->font_small,.95f,.96f,.98f);
+#endif
 }
 static void accent_real(int preset,float *r,float *g,float *b){
     if(preset<0 || preset>=ACCENT_COUNT)preset=ACCENT_SYSTEM;
@@ -1463,7 +1490,7 @@ static void button(Paint *p,const char *label,int x,int y,int w,int h,int primar
     SDL_Rect rect={x,y,w,h};rounded_box(rect,14,fill,NULL);
     if(!primary)rounded_outline(rect,14,1,ui_rgb(ui_light_theme?0xc4ced9:0x495967,105));
     if(icon!=I_NONE)ui_labeled_icon(p,icon,s,x,y,w,h,fg);
-    else ui_center_color(p,s,x,y,w,h,p->font_small,fg);
+    else ui_center_color(p,s,x,y,w,h,p->font_label?p->font_label:p->font_small,fg);
 #else
     /* Flat fills: no simulated border/shadow in Basic White. */
     float secondary=ui_light_theme?.11f:.15f;
@@ -1872,7 +1899,11 @@ static void draw_content(Paint *p,Page page,Movie *movies,int n,int chosen,
             button(p,TR("Закрити","Close"),1050,98,198,46,0);
         }else{
         web_header_bg(p,80);
+#ifdef UAPLAY_PS5_SOFTWARE
+        text_font(p,"UAPlay",25,18,166,p->font_brand,1.f,1.f,1.f);
+#else
         headline(p,"UAPlay",25,18,166);
+#endif
         const char *tabs[]={TR("Головна","Home"),TR("Серіали","TV Shows"),TR("Фільми","Movies"),
             TR("Мультфільми","Animation"),"IPTV",TR("Вибране","Favorites")};
         int active=page==IPTV_CHANNELS?IPTV_TAB_FOCUS:7+tab_for_category(ui_category);
@@ -1882,7 +1913,12 @@ static void draw_content(Paint *p,Page page,Movie *movies,int n,int chosen,
             if(focus==active)box_alpha(p,x,19,w,43,.19f,.24f,.28f,1.f,16);
             if(focus==focused)selection_frame(p,x,19,w,43);
             text_center_button(p,tabs[i],x,19,w,43,
-                               p->font_small,.96f,.97f,.99f);
+#ifdef UAPLAY_PS5_SOFTWARE
+                               p->font_label?p->font_label:p->font_small,
+#else
+                               p->font_small,
+#endif
+                               .96f,.97f,.99f);
             press_preview(p,x,19,w,43,16);
         }
         /* Search is a real touch target, not a missing Unicode glyph. */
@@ -1901,7 +1937,12 @@ static void draw_content(Paint *p,Page page,Movie *movies,int n,int chosen,
         char clock_label[32]="--:--";
         if(local)strftime(clock_label,sizeof(clock_label),"%H:%M",local);
         text_font(p,clock_label,1116,18,106,
-                  p->font_big,.95f,.97f,.99f);
+#ifdef UAPLAY_PS5_SOFTWARE
+                  p->font_clock?p->font_clock:p->font_big,
+#else
+                  p->font_big,
+#endif
+                  .95f,.97f,.99f);
         }
         if(page==IPTV_CHANNELS){
             int nc=0,ng=0;
@@ -5028,6 +5069,12 @@ cleanup_paint:
         if(paint.scripts_big[i])TTF_CloseFont(paint.scripts_big[i]);
         if(paint.scripts_tiny[i])TTF_CloseFont(paint.scripts_tiny[i]);
     }
+#ifdef UAPLAY_PS5_SOFTWARE
+    if(paint.font_label)TTF_CloseFont(paint.font_label);
+    if(paint.font_card)TTF_CloseFont(paint.font_card);
+    if(paint.font_brand)TTF_CloseFont(paint.font_brand);
+    if(paint.font_clock)TTF_CloseFont(paint.font_clock);
+#endif
     if(paint.font_tiny)TTF_CloseFont(paint.font_tiny);
     if(paint.font_small)TTF_CloseFont(paint.font_small);
     if(paint.font_big)TTF_CloseFont(paint.font_big);

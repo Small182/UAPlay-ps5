@@ -85,6 +85,8 @@ static int preview_smoke(Paint *paint){
     snprintf(sources[0].title,sizeof(sources[0].title),"Тестове джерело 1");
     snprintf(sources[1].title,sizeof(sources[1].title),"Тестове джерело 2");
     int ok=preview_pad_selftest();
+    fprintf(stderr,"[preview] bundled web typography: %s\n",paint->web_font_faces?"PASS":"FAIL");
+    ok &= paint->web_font_faces;
     int raster_w=0,raster_h=0;
     int logical_w=0,logical_h=0;
     SDL_RenderGetLogicalSize(ui_renderer,&logical_w,&logical_h);

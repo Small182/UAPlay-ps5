@@ -162,12 +162,13 @@ static void ui_center_color(Paint *p,const char *s,int x,int y,int w,int h,TTF_F
  ui_theme_enabled=old;
 }
 static void ui_labeled_icon(Paint *p,UiIcon i,const char *s,int x,int y,int w,int h,SDL_Color c){
- int sz=22,gap=8,tw=measure(p,s,p->font_small);
+ TTF_Font *font=p->font_label?p->font_label:p->font_small;
+ int sz=22,gap=8,tw=measure(p,s,font);
  int available=w-sz-gap-12;if(available<4)return;
  if(tw>available)tw=available;
  int left=x+(w-tw-sz-gap)/2;
  ui_icon(i,left+sz*.5f,y+h*.5f,sz,c);
- ui_center_color(p,s,left+sz+gap,y,tw+1,h,p->font_small,c);
+ ui_center_color(p,s,left+sz+gap,y,tw+1,h,font,c);
 }
 /* Render focus last: no clipping by a subsequently drawn card. The logical
    focus switches immediately; the visual ring eases to the target. */

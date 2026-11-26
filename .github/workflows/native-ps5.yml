@@ -33,7 +33,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang-18 lld-18 ccache git curl wget unzip rsync \
             build-essential pkg-config python3 cmake ninja-build libcurl4-openssl-dev ca-certificates exfatprogs exfat-fuse fuse3 \
-            llvm-18 autoconf automake autopoint libtool gettext meson nasm bison flex texinfo gperf patch python3-mako
+            llvm-18 autoconf automake autopoint libtool gettext meson nasm bison flex texinfo gperf patch python3-mako python3-fonttools
       - name: Check Switch 0.5.10 source version and native networking glue
         run: |
           set -euo pipefail
@@ -124,6 +124,8 @@ jobs:
             /tmp/uaplay-vlc-work/static-ps5
             /tmp/uaplay-vlc-work/src/vlc-3.0.24/include
           key: ${{ steps.vlc_deps.outputs.cache-primary-key }}
+      - name: Generate web-style static Inter font weights
+        run: /usr/bin/python3 scripts/prepare-web-fonts.py
       - name: Cross-compile the native PS5 UAPlay title
         run: bash scripts/build-ps5-software.sh
       - name: Verify native title files
