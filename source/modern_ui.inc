@@ -93,10 +93,12 @@ static void ui_center_color(Paint *p,const char *s,int x,int y,int w,int h,TTF_F
  ui_theme_enabled=old;
 }
 static void ui_labeled_icon(Paint *p,UiIcon i,const char *s,int x,int y,int w,int h,SDL_Color c){
- int tw=measure(p,s,p->font_small),sz=22,gap=8,left=x+(w-tw-sz-gap)/2;
- if(left<x+6)left=x+6;
+ int sz=22,gap=8,tw=measure(p,s,p->font_small);
+ int available=w-sz-gap-12;if(available<4)return;
+ if(tw>available)tw=available;
+ int left=x+(w-tw-sz-gap)/2;
  ui_icon(i,left+sz*.5f,y+h*.5f,sz,c);
- ui_center_color(p,s,left+sz+gap,y,w-(left-x)-sz-gap-5,h,p->font_small,c);
+ ui_center_color(p,s,left+sz+gap,y,tw+1,h,p->font_small,c);
 }
 /* Render focus last: no clipping by a subsequently drawn card. The logical
    focus switches immediately; the visual ring eases to the target. */
@@ -138,8 +140,24 @@ static void ui_focus_finish(void){
 }
 static int ui_focus_moving(void){Uint32 now=SDL_GetTicks();return ui_focus.valid&&(now-ui_focus.changed<175||(ui_press_at&&now-ui_press_at<145));}
 static void ui_panel(Paint *p,int x,int y,int w,int h,int radius){
- SDL_Color bg=ui_rgb(ui_light_theme?0xf4f6f8:0x171c24,ui_wallpaper_active?215:255);
- rounded_box((SDL_Rect){x,y,w,h},radius,bg,NULL);
+ /* Soft vertical tonal gradient in one rounded mesh, no banding.
+    Distinct bright/dark palettes keep text and poster artwork intact. */
+ SDL_Color top=ui_rgb(ui_light_theme?0xf8fafc:0x202a34,ui_wallpaper_active?215:255);
+ SDL_Color bottom=ui_rgb(ui_light_theme?0xeef2f6:0x151b23,ui_wallpaper_active?205:255);
+ enum {SEG=12,N=4*(SEG+1)};
+ SDL_Vertex v[N+1];int idx[N*3];
+ SDL_Color mid={(top.r+bottom.r)/2,(top.g+bottom.g)/2,(top.b+bottom.b)/2,(top.a+bottom.a)/2};
+ v[0]=(SDL_Vertex){{x+w*.5f,y+h*.5f},mid,{0,0}};
+ for(int corner=0;corner<4;corner++){
+  float cx=x+(corner==0||corner==3?w-radius:radius),cy=y+(corner<2?h-radius:radius);
+  for(int j=0;j<=SEG;j++){
+   int k=corner*(SEG+1)+j;float angle=(corner*SEG+j)*1.57079632679f/SEG;
+   float px=cx+radius*cosf(angle),py=cy+radius*sinf(angle),t=(py-y)/h;
+   SDL_Color c={top.r+(bottom.r-top.r)*t,top.g+(bottom.g-top.g)*t,top.b+(bottom.b-top.b)*t,top.a+(bottom.a-top.a)*t};
+   v[k+1]=(SDL_Vertex){{px,py},c,{0,0}};idx[k*3]=0;idx[k*3+1]=k+1;idx[k*3+2]=(k+1)%N+1;
+  }
+ }
+ SDL_RenderGeometry(ui_renderer,NULL,v,N+1,idx,N*3);
  rounded_outline((SDL_Rect){x,y,w,h},radius,1,ui_rgb(ui_light_theme?0xd1d9e1:0x526272,90));
  (void)p;
 }

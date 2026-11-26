@@ -56,6 +56,29 @@ static int preview_live_catalog(void){
     }
     return ok;
 }
+static int preview_focus_motion(Paint *paint,Movie *movies,Source *sources){
+    ui_light_theme=0;ui_category=0;expanded_catalog=0;home_shelf=0;
+    catalog_hero_focus=0;ui_search_query[0]=0;
+    ui_focus.valid=0;
+    draw(paint,CATALOG,movies,12,0,sources,2,0,"Популярні фільми","");
+    SDL_Rect first=ui_focus.target;
+    int ok=ui_focus.valid&&ui_focus.seen&&preview_capture("focus-start");
+    draw(paint,CATALOG,movies,12,1,sources,2,0,"Популярні фільми","");
+    SDL_Rect second=ui_focus.target;
+    if(first.x>=second.x)ok=0;
+    /* Test the easing curve with a controlled timestamp, independent of CI
+       renderer speed or OS scheduling. */
+    ui_focus_sample(ui_focus.changed+55);
+    if(ui_focus.visual.x<=first.x||ui_focus.visual.x>=second.x)ok=0;
+    ui_focus.changed=SDL_GetTicks()-55;
+    draw(paint,CATALOG,movies,12,1,sources,2,0,"Популярні фільми","");
+    ok &= preview_capture("focus-moving");
+    ui_focus.changed=SDL_GetTicks()-200;
+    draw(paint,CATALOG,movies,12,1,sources,2,0,"Популярні фільми","");
+    ok &= fabsf(ui_focus.visual.x-second.x)<.1f&&preview_capture("focus-settled");
+    fprintf(stderr,"[preview] focus motion: %s\n",ok?"PASS":"FAIL");
+    return ok;
+}
 static int preview_smoke(Paint *paint){
     Movie movies[12]={0};Source sources[2]={0};
     preview_fixture(movies,12);
@@ -79,6 +102,7 @@ static int preview_smoke(Paint *paint){
         ok &= preview_page(paint,PROVIDERS,movies,sources,light?"providers-light":"providers-dark");
         ok &= preview_page(paint,SOURCES,movies,sources,light?"sources-light":"sources-dark");
     }
+    ok &= preview_focus_motion(paint,movies,sources);
     const char *clip=getenv("UAPLAY_PREVIEW_VIDEO");
     if(!clip||!*clip){fprintf(stderr,"Missing UAPLAY_PREVIEW_VIDEO\n");return 1;}
     mpv_handle *p=NULL;mpv_render_context *render=NULL;
