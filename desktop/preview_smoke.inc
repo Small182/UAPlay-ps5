@@ -40,7 +40,7 @@ static int preview_smoke(Paint *paint){
     preview_fixture(movies,12);
     snprintf(sources[0].title,sizeof(sources[0].title),"Тестове джерело 1");
     snprintf(sources[1].title,sizeof(sources[1].title),"Тестове джерело 2");
-    int ok=1;
+    int ok=preview_pad_selftest();
     for(int light=0;light<2;light++){
         ui_light_theme=light;
         ui_category=0;expanded_catalog=0;home_shelf=0;ui_search_query[0]=0;

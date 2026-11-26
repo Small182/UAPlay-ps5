@@ -14,7 +14,7 @@ for f in source/*.c; do
 done
 cc -std=gnu11 -O2 -g -Wall -Wextra -D__PS5__ -DUAPLAY_PS5_SOFTWARE \
     -DUAPLAY_USE_VLC_COMPAT -DUAPLAY_DESKTOP_PREVIEW -DSDL_MAIN_HANDLED \
-    -Isource "${cflags[@]}" "${sources[@]}" ps5/libvlc_mpv.c desktop/host_platform.c \
+    -Isource "${cflags[@]}" "${sources[@]}" ps5/libvlc_mpv.c desktop/host_platform.c desktop/virtual_pad.c \
     -o "$out/uaplay-preview" "${libs[@]}" -lm -pthread
 cp -a romfs "$out/"
 cp /etc/ssl/certs/ca-certificates.crt "$out/romfs/cacert.pem"

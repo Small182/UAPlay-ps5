@@ -42,6 +42,9 @@
 #ifdef UAPLAY_PS5_SOFTWARE
 #include "../ps5/native_display.h"
 #endif
+#ifdef UAPLAY_DESKTOP_PREVIEW
+#include "../desktop/virtual_pad.h"
+#endif
 
 typedef enum { CATALOG, DETAILS, SOURCES, PLAYER, SETTINGS,
                SEASONS, EPISODES, TRACK_PICKER, VIDEO_SETTINGS,
@@ -2600,7 +2603,11 @@ static int keyboard(char *value,size_t size) {
     int uk_mode=keyboard_url_mode?0:1,row=0,col=0,active=1,confirmed=0;
     while(active){
         SDL_Event event;
+#ifdef UAPLAY_DESKTOP_PREVIEW
+        while(preview_poll_event(&event)){
+#else
         while(SDL_PollEvent(&event)){
+#endif
             int key=-1;
             if(event.type==SDL_QUIT){active=0;break;}
             if(event.type==SDL_CONTROLLERBUTTONDOWN)
@@ -3052,7 +3059,11 @@ int main(void) {
     }
 #endif
     SDL_GameController *pad=NULL;
-    for(int i=0;i<SDL_NumJoysticks();i++)
+#ifdef UAPLAY_DESKTOP_PREVIEW
+    pad=preview_pad_open();
+    if(!pad)fprintf(stderr,"Virtual controller failed: %s\n",SDL_GetError());
+#endif
+    if(!pad)for(int i=0;i<SDL_NumJoysticks();i++)
         if(SDL_IsGameController(i)){pad=SDL_GameControllerOpen(i);break;}
     mpv_handle *player=NULL;
     mpv_render_context *render=NULL;
@@ -3102,7 +3113,11 @@ int main(void) {
         if(page==PLAYER)ps5_player_right_stick(pad,player);
 #endif
         SDL_Event e;
+#ifdef UAPLAY_DESKTOP_PREVIEW
+        while(preview_poll_event(&e)){
+#else
         while(SDL_PollEvent(&e)){
+#endif
             if(e.type==SDL_QUIT)running=0;
             int key=-1;
             if(e.type==SDL_CONTROLLERBUTTONDOWN)key=native_button(e.cbutton.button);
@@ -4739,6 +4754,9 @@ int main(void) {
     free(movies);
     if(render)mpv_render_context_free(render);
     if(player)mpv_terminate_destroy(player);
+#ifdef UAPLAY_DESKTOP_PREVIEW
+    if(preview_pad_owns(pad)){preview_pad_close();pad=NULL;}
+#endif
     if(pad)SDL_GameControllerClose(pad);
     posters_destroy();
     catalog_http_cleanup();

@@ -20,9 +20,32 @@ can run the Linux artifact after installing the runtime libraries.
 For live catalog use, put your own TMDB key in preview-data/tmdb.key or configure
 the UAPlay-web gateway in settings. CI deliberately does not embed a secret.
 
-Arrow keys move, Enter acts as Cross, Backspace as Circle, X as Square,
-Y as Triangle, M/Escape as Options. SDL game controllers work when exposed to
-the host; WSL controller passthrough is not guaranteed.
+The preview creates an SDL virtual DualSense-style controller automatically.
+No physical controller or system-level driver is required. Keyboard presses
+and releases are converted to controller buttons and analog axes; the existing
+PS5 navigation and player logic receives those events.
+
+| Keyboard | Virtual controller |
+|---|---|
+| Arrow keys | D-pad |
+| Enter / Space | Cross |
+| Backspace / Escape | Circle |
+| X / Y | Square / Triangle |
+| Q / E (or Tab) | L1 / R1 |
+| M | Options |
+| W A S D | Left stick |
+| I J K L | Right stick |
+| 1 / 2 | L2 / R2 |
+| C / V | L3 / R3 |
+| T | Touchpad |
+| F1 | Show keyboard controls in a dialog |
+
+In playback, A/D seek ±10 seconds, W/S seek ±60 seconds, J/L control
+volume and I/K control picture brightness. Arrow keys select the player
+panel buttons. Search uses the actual console on-screen keyboard.
+Focus loss releases all virtual buttons and axes. F1 is desktop-only.
+The smoke test also checks the virtual controller mapping and release.
+This tests app-level SDL input, not the PS5's real controller driver.
 
 ## CI
 The separate Desktop Preview workflow compiles the app, runs the existing
