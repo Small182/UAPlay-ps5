@@ -8,7 +8,7 @@ The PS5 build does not include desktop/ and its hardware decode path is unchange
 ## Ubuntu 24.04 / Windows WSL2 (WSLg)
 ```sh
 sudo apt update
-sudo apt install build-essential pkg-config libsdl2-dev libsdl2-ttf-dev libsdl2-image-dev libcurl4-openssl-dev libvlc-dev vlc-plugin-base libswscale-dev libavutil-dev ffmpeg ca-certificates
+sudo apt install build-essential pkg-config libsdl2-dev libsdl2-ttf-dev libsdl2-image-dev libcurl4-openssl-dev libvlc-dev vlc-plugin-base vlc-plugin-video-output libswscale-dev libavutil-dev ffmpeg ca-certificates
 bash desktop/build.sh
 cd build/desktop-preview
 ./uaplay-preview

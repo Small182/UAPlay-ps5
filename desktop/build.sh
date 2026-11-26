@@ -17,4 +17,5 @@ cc -std=gnu11 -O2 -g -Wall -Wextra -D__PS5__ -DUAPLAY_PS5_SOFTWARE \
     -Isource "${cflags[@]}" "${sources[@]}" ps5/libvlc_mpv.c desktop/host_platform.c \
     -o "$out/uaplay-preview" "${libs[@]}" -lm -pthread
 cp -a romfs "$out/"
+cp /etc/ssl/certs/ca-certificates.crt "$out/romfs/cacert.pem"
 echo "Preview built: $out/uaplay-preview"

@@ -23,7 +23,7 @@ jobs:
       - name: Install host SDL and VLC
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libsdl2-dev libsdl2-ttf-dev libsdl2-image-dev libcurl4-openssl-dev libvlc-dev vlc-plugin-base libswscale-dev libavutil-dev ffmpeg ca-certificates
+          sudo apt-get install -y build-essential pkg-config libsdl2-dev libsdl2-ttf-dev libsdl2-image-dev libcurl4-openssl-dev libvlc-dev vlc-plugin-base vlc-plugin-video-output libswscale-dev libavutil-dev ffmpeg ca-certificates
       - name: Build original PS5 UI on Linux
         run: bash desktop/build.sh
       - name: Portable catalogue regression checks
