@@ -2871,6 +2871,15 @@ static void present_ui(SDL_Window *window){
 #include "../desktop/preview_smoke.inc"
 #endif
 int main(void) {
+#if defined(UAPLAY_DESKTOP_PREVIEW) && defined(_WIN32)
+    /* Explorer shortcuts may supply a different working directory. */
+    SDL_SetMainReady();
+    char *base=SDL_GetBasePath();
+    if(base){
+        if(_chdir(base)!=0){SDL_free(base);return 1;}
+        SDL_free(base);
+    }
+#endif
 #if defined(__PS5__) || defined(__PS4__)
     fprintf(stderr,"[UAPlay] native console SDL UI booting (no browser host)\n");
     SDL_SetMainReady();

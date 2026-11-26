@@ -15,8 +15,13 @@ cd build/desktop-preview
 ```
 
 Run from the directory containing romfs/. Storage is isolated in preview-data/.
-A Windows native .exe is not supplied by this initial workflow; Windows with WSLg
-can run the Linux artifact after installing the runtime libraries.
+## Windows x64 portable
+Download the **UAPlay-PS5-Desktop-Windows-x64** artifact from a successful
+Windows Preview Actions run. Extract the entire archive into a folder you
+can write to and double-click UAPlay.exe. Keep the DLLs, plugins and romfs
+alongside the EXE. No WSL, installer, admin access or controller driver is
+required. Your organization's application control policy must permit execution.
+The first Windows CI run must pass before the artifact is considered tested.
 For live catalog use, put your own TMDB key in preview-data/tmdb.key or configure
 the UAPlay-web gateway in settings. CI deliberately does not embed a secret.
 

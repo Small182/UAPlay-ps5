@@ -166,7 +166,9 @@ static void frame_free(void *ptr){
 }
 static void *frame_alloc(size_t size){
     void *ptr=vlc_ps5_big_alloc(size);
+#if !defined(UAPLAY_DESKTOP_PREVIEW) || !defined(_WIN32)
     if(!ptr&&posix_memalign(&ptr,64,size)!=0)ptr=NULL;
+#endif
     return ptr;
 }
 static void video_buffers_free(mpv_handle *p){
@@ -365,8 +367,14 @@ int mpv_initialize(mpv_handle *p){
     /* Check the actual allocation route before creating VLC frame pools. */
     extern void *__wrap_aligned_alloc(size_t alignment,size_t size);
     void *test=__wrap_aligned_alloc(64,512);
+#if defined(UAPLAY_DESKTOP_PREVIEW) && defined(_WIN32)
+    int aligned_ok=test && !((uintptr_t)test&63u);
+    frame_free(test);
+    if(!aligned_ok){init_status("aligned_alloc failed",NULL);return -1;}
+#else
     if(!test || ((uintptr_t)test&63u)){free(test);init_status("aligned_alloc failed",NULL);return -1;}
     free(test);
+#endif
     init_status("hardware probe",NULL);
     ps5_vlc_hw_init();
     /* Match the pinned VLC-PS5 player's options. The static ps5vdec plugin

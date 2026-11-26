@@ -6,7 +6,11 @@
 #define UAPLAY_DATA_ROOT "preview-data"
 #define UAPLAY_DATA_DIR UAPLAY_DATA_ROOT
 #define UAPLAY_ROMFS "romfs/"
+#ifdef _WIN32
+#define UAPLAY_CA_BUNDLE UAPLAY_ROMFS "cacert.pem"
+#else
 #define UAPLAY_CA_BUNDLE "/etc/ssl/certs/ca-certificates.crt"
+#endif
 #elif defined(__PS5__)
 #define UAPLAY_CONSOLE 1
 #define UAPLAY_DATA_ROOT "/download0"

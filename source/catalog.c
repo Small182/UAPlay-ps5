@@ -95,7 +95,11 @@ static void country_cache_load(void){
     fclose(file);
 }
 static void country_cache_save(void){
+#ifdef UAPLAY_DESKTOP_PREVIEW
+    mkdir(UAPLAY_DATA_DIR,0777);
+#else
     mkdir("sdmc:/switch/uaplay",0777);
+#endif
     FILE *file=fopen(COUNTRY_CACHE_TMP,"w");
     if(!file)return;
     for(int i=0;i<country_cache_count;i++)

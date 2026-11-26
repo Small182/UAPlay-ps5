@@ -28,15 +28,29 @@ SDL_Window *ps5_open_display(SDL_Renderer **renderer){
     return w;
 }
 void ps5_release_splash(void){}
-const char *console_curl_ca_file(void){return "/etc/ssl/certs/ca-certificates.crt";}
+const char *console_curl_ca_file(void){
+#ifdef _WIN32
+    return "romfs/cacert.pem";
+#else
+    return "/etc/ssl/certs/ca-certificates.crt";
+#endif
+}
 void console_curl_setup(CURL *c){
     curl_easy_setopt(c,CURLOPT_NOSIGNAL,1L);
     curl_easy_setopt(c,CURLOPT_CAINFO,console_curl_ca_file());
 }
+#ifdef _WIN32
+/* Desktop libcurl uses Winsock directly; no console fcntl workaround. */
+int console_curl_nonblocking(int fd){(void)fd;return -1;}
+void *__wrap_aligned_alloc(size_t a,size_t n){return _aligned_malloc(n,a);}
+void *vlc_ps5_big_alloc(size_t n){return _aligned_malloc(n,64);}
+int vlc_ps5_big_free(void *p){_aligned_free(p);return 1;}
+#else
 int console_curl_nonblocking(int fd){int flags=fcntl(fd,F_GETFL,0);return flags<0?-1:fcntl(fd,F_SETFL,flags|O_NONBLOCK);}
 void *__wrap_aligned_alloc(size_t a,size_t n){void *p=NULL;return posix_memalign(&p,a,n)==0?p:NULL;}
 void *vlc_ps5_big_alloc(size_t n){return __wrap_aligned_alloc(64,n);}
 int vlc_ps5_big_free(void *p){free(p);return 1;}
+#endif
 void hui_heap_stats(size_t *l,size_t *p,size_t *b,size_t *f){if(l)*l=0;if(p)*p=0;if(b)*b=0;if(f)*f=0;}
 
 /* Keep the same PCM callback/clock path; substitute SDL for sceAudioOut. */

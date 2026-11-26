@@ -1,0 +1,76 @@
+name: UAPlay PS5 Windows Portable
+on:
+  workflow_dispatch:
+  push:
+    branches: [fw13-libvlc-native]
+    paths:
+      - 'source/**'
+      - 'ps5/libvlc_mpv.c'
+      - 'romfs/**'
+      - 'desktop/**'
+      - '.github/workflows/desktop-windows.yml'
+permissions:
+  contents: read
+concurrency:
+  group: uaplay-windows-preview-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            curl unzip
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-binutils
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-SDL2
+            mingw-w64-ucrt-x86_64-SDL2_ttf
+            mingw-w64-ucrt-x86_64-SDL2_image
+            mingw-w64-ucrt-x86_64-curl
+            mingw-w64-ucrt-x86_64-ffmpeg
+            mingw-w64-ucrt-x86_64-ca-certificates
+      - name: Compile and bundle native Windows EXE
+        run: bash desktop/build-windows.sh
+      - name: Create local video and test portable bundle
+        run: |
+          set -euo pipefail
+          mkdir -p build/windows-test
+          ffmpeg -hide_banner -loglevel error -y -f lavfi -i testsrc2=size=1280x720:rate=24 -f lavfi -i sine=frequency=440:sample_rate=48000 -t 15 -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac build/windows-test/test.mp4
+          export UAPLAY_PREVIEW_SMOKE="$(cygpath -am build/windows-test)"
+          export UAPLAY_PREVIEW_VIDEO="$UAPLAY_PREVIEW_SMOKE/test.mp4"
+          export SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+          cd build/windows-preview
+          # Exclude MSYS2's UCRT64 DLL directory from the running app's PATH.
+          # This ensures the ZIP is self-contained rather than relying on CI.
+          PATH=/usr/bin:/c/Windows/System32:/c/Windows timeout 120 ./UAPlay.exe 2>&1 | tee "$UAPLAY_PREVIEW_SMOKE/test.log"
+          rm -rf preview-data
+      - name: Convert UI screenshots
+        if: always()
+        run: |
+          shopt -s nullglob
+          for bmp in build/windows-test/*.bmp; do
+            ffmpeg -hide_banner -loglevel error -y -i "$bmp" "${bmp%.bmp}.png" && rm "$bmp"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: UAPlay-PS5-Windows-UI-tests
+          path: |
+            build/windows-test/*.png
+            build/windows-test/test.log
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: UAPlay-PS5-Desktop-Windows-x64
+          path: build/windows-preview/
+          retention-days: 14
