@@ -139,6 +139,11 @@ static int preview_smoke(Paint *paint){
     ok &= preview_card_layout(paint);
     for(int mode=0;mode<2;mode++){
         SDL_Rect lang=keyboard_key_rect(mode,3,0),space=keyboard_key_rect(mode,3,1),search=keyboard_key_rect(mode,3,2);
+        SDL_Rect prev=keyboard_key_rect(mode,2,0),first=keyboard_key_rect(mode,0,0),second=keyboard_key_rect(mode,1,0);
+        ok &= second.y-first.y==prev.y-second.y &&
+              space.y-prev.y==second.y-first.y &&
+              lang.y==space.y && search.y==space.y &&
+              lang.h==prev.h && space.h==prev.h && search.h==prev.h;
         ok &= keyboard_columns(mode,3)==3 && space.x+space.w/2==640 &&
               lang.x+lang.w<space.x && space.x+space.w<search.x &&
               lang.x+search.x+search.w==1280 &&

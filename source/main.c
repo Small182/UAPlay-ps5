@@ -3122,7 +3122,7 @@ static SDL_Rect keyboard_key_rect(int mode,int row,int col){
     if(row==3){
         /* Same height as letter keys. Symmetric icon keys flank space. */
         static const int x[]={320,406,882},w[]={78,468,78};
-        return (SDL_Rect){x[col],507,w[col],68};
+        return (SDL_Rect){x[col],208+row*91,w[col],68};
     }
     int count=keyboard_columns(mode,row);
     return (SDL_Rect){640-(count*86-8)/2+col*86,208+row*91,78,68};
