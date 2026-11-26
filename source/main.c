@@ -2860,6 +2860,9 @@ static void present_ui(SDL_Window *window){
 #endif
 }
 
+#ifdef UAPLAY_DESKTOP_PREVIEW
+#include "../desktop/preview_smoke.inc"
+#endif
 int main(void) {
 #if defined(__PS5__) || defined(__PS4__)
     fprintf(stderr,"[UAPlay] native console SDL UI booting (no browser host)\n");
@@ -3035,6 +3038,19 @@ int main(void) {
         goto cleanup_paint;
     }
     posters_init();
+#ifdef UAPLAY_DESKTOP_PREVIEW
+    if(getenv("UAPLAY_PREVIEW_SMOKE")){
+        exit_code=preview_smoke(&paint);
+        posters_destroy();
+        downloads_shutdown();
+        wallpapers_shutdown();
+        iptv_free(&ps5_tv_channels);
+        iptv_free(&ps5_tv_favorites);
+        catalog_http_cleanup();
+        free(movies);
+        goto cleanup_paint;
+    }
+#endif
     SDL_GameController *pad=NULL;
     for(int i=0;i<SDL_NumJoysticks();i++)
         if(SDL_IsGameController(i)){pad=SDL_GameControllerOpen(i);break;}

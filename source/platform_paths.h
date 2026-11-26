@@ -2,7 +2,13 @@
 #define UAPLAY_PLATFORM_PATHS_H
 
 /* A native PS5 title's writable sandbox mount. Never write into /app0. */
-#ifdef __PS5__
+#if defined(UAPLAY_DESKTOP_PREVIEW)
+#define UAPLAY_DATA_ROOT "preview-data"
+#define UAPLAY_CATALOG_DIR UAPLAY_DATA_ROOT
+#define UAPLAY_LIBRARY_DIR UAPLAY_DATA_ROOT "/library"
+#define UAPLAY_POSTER_DIR UAPLAY_DATA_ROOT "/posters"
+#define UAPLAY_ASSET(file) "romfs/" file
+#elif defined(__PS5__)
 #define UAPLAY_DATA_ROOT "/download0/uaplay"
 #define UAPLAY_CATALOG_DIR UAPLAY_DATA_ROOT
 #define UAPLAY_LIBRARY_DIR UAPLAY_DATA_ROOT "/library"

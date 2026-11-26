@@ -374,6 +374,29 @@ static uint64_t movie_identity(const Movie *movie){
 }
 
 UiTexture poster_texture(const Movie *movie,int *budget){
+#ifdef UAPLAY_DESKTOP_PREVIEW
+    /* Deterministic, local test artwork. Never send fixture URLs to TMDB. */
+    if(movie && !strncmp(movie->poster,"preview:",8)){
+        uint64_t id=movie_identity(movie);
+        for(int i=0;i<used;i++)if(cache[i].id==id)return cache[i].texture;
+        if(used>=POSTER_CACHE_MAX)return 0;
+        SDL_Surface *surface=SDL_CreateRGBSurfaceWithFormat(0,240,360,32,SDL_PIXELFORMAT_RGBA32);
+        if(!surface)return 0;
+        unsigned k=(unsigned)movie->id;
+        for(int y=0;y<360;y++){
+            SDL_Rect row={0,y,240,1};
+            SDL_FillRect(surface,&row,SDL_MapRGBA(surface->format,
+                40+(k*31+y/5)%155,30+(k*17+y/4)%145,55+(k*23+y/3)%140,255));
+        }
+        SDL_Rect stripe={28,72,184,6};
+        SDL_FillRect(surface,&stripe,SDL_MapRGBA(surface->format,235,235,235,255));
+        stripe.y=274;stripe.w=148;
+        SDL_FillRect(surface,&stripe,SDL_MapRGBA(surface->format,235,235,235,255));
+        UiTexture texture=ui_texture_create(surface);SDL_FreeSurface(surface);
+        if(texture){cache[used].id=id;cache[used].texture=texture;cache[used].width=240;cache[used].height=360;cache[used].last_used=++cache_clock;used++;}
+        return texture;
+    }
+#endif
     return movie?cached_texture(movie->poster,movie_identity(movie),budget,NULL,NULL):0;
 }
 

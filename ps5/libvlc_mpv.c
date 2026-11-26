@@ -24,6 +24,7 @@
  * these locally. Cancellation is atomic because VLC calls it on worker threads. */
 /* The console fills imported decoder addresses only after loading module 207.
  * Inspect the actual GOT slots rather than calling unresolved imports. */
+#ifndef UAPLAY_DESKTOP_PREVIEW
 extern int sceSysmoduleLoadModule(uint16_t id);
 extern void vlc_ps5_vdec_prepare(void);
 extern void vlc_ps5_vdec_probe(const char *when);
@@ -54,6 +55,12 @@ void ps5_vlc_hw_init(void){
     vlc_ps5_vdec_probe("UAPlay sandbox");
     __atomic_store_n(&hw_ready,1,__ATOMIC_RELEASE);
 }
+#else
+/* Host VLC has no console decoder or firmware imports. */
+static int hw_active,hw_failed;
+static int vlc_ps5_vdec_available(void){return 0;}
+static void ps5_vlc_hw_init(void){}
+#endif
 void vlc_ps5_copy_plane_shift(uint8_t *dst,size_t dp,const uint8_t *src,size_t sp,
                              size_t bytes,unsigned rows,unsigned shift){
     for(unsigned y=0;y<rows;y++,dst+=dp,src+=sp){
@@ -351,8 +358,10 @@ int mpv_initialize(mpv_handle *p){
     mkdir(UAPLAY_DATA_ROOT,0777);
     mkdir(UAPLAY_DATA_ROOT "/cache",0777);
     mkdir(UAPLAY_DATA_ROOT "/.cache",0777);
+#ifndef UAPLAY_DESKTOP_PREVIEW
     setenv("HOME",UAPLAY_DATA_ROOT,1);
     setenv("TMPDIR",UAPLAY_DATA_ROOT "/cache",1);
+#endif
     /* Check the actual allocation route before creating VLC frame pools. */
     extern void *__wrap_aligned_alloc(size_t alignment,size_t size);
     void *test=__wrap_aligned_alloc(64,512);
@@ -365,9 +374,12 @@ int mpv_initialize(mpv_handle *p){
     const char *args[]={
         "--ignore-config","--no-video-title-show","--no-sub-autodetect-file",
         "--aout=adummy","--adaptive-use-access","--subsdec-encoding=UTF-8",
+#ifndef UAPLAY_DESKTOP_PREVIEW
         "--gnutls-dir-trust=/app0/certs","--no-gnutls-system-trust",
         "--freetype-font=/app0/fonts/subtitle.ttf",
-        "--ssa-fontsdir=/app0/fonts/fallback","--stats","--no-drop-late-frames","--no-skip-frames","--verbose=2"
+        "--ssa-fontsdir=/app0/fonts/fallback",
+#endif
+        "--stats","--no-drop-late-frames","--no-skip-frames","--verbose=2"
     };
     init_status("libvlc_new",NULL);
     p->vlc=libvlc_new(sizeof(args)/sizeof(args[0]),args);
@@ -571,7 +583,11 @@ mpv_event *mpv_wait_event(mpv_handle *p,double timeout){
         SDL_LockMutex(p->lock);unsigned frames=p->serial;SDL_UnlockMutex(p->lock);
         SDL_LockMutex(p->audio_lock);unsigned audio=p->audio_packets;SDL_UnlockMutex(p->audio_lock);
         if((s==libvlc_Playing||audio>0)&&!p->playing_since)p->playing_since=now;
-        if(!frames&&p->playing_since&&now-p->playing_since>8000 && !p->software_retry){
+        if(!frames&&p->playing_since&&now-p->playing_since>8000 && !p->software_retry
+#ifdef UAPLAY_DESKTOP_PREVIEW
+           && vlc_ps5_vdec_available()
+#endif
+          ){
             /* A failed OpenDecoder may never announce hw_active. Do not
                wait indefinitely for a callback that was never installed. */
             __atomic_store_n(&hw_failed,1,__ATOMIC_RELEASE);

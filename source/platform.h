@@ -2,7 +2,12 @@
 #define UAPLAY_PLATFORM_H
 
 /* Storage roots per console. Host-side tests keep the Switch layout. */
-#ifdef __PS5__
+#if defined(UAPLAY_DESKTOP_PREVIEW)
+#define UAPLAY_DATA_ROOT "preview-data"
+#define UAPLAY_DATA_DIR UAPLAY_DATA_ROOT
+#define UAPLAY_ROMFS "romfs/"
+#define UAPLAY_CA_BUNDLE "/etc/ssl/certs/ca-certificates.crt"
+#elif defined(__PS5__)
 #define UAPLAY_CONSOLE 1
 #define UAPLAY_DATA_ROOT "/download0"
 #define UAPLAY_ROMFS "/app0/romfs/"

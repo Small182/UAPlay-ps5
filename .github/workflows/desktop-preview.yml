@@ -1,0 +1,63 @@
+name: UAPlay PS5 Desktop Preview
+on:
+  workflow_dispatch:
+  push:
+    branches: [fw13-libvlc-native]
+    paths:
+      - 'source/**'
+      - 'ps5/libvlc_mpv.c'
+      - 'romfs/**'
+      - 'desktop/**'
+      - '.github/workflows/desktop-preview.yml'
+permissions:
+  contents: read
+concurrency:
+  group: uaplay-desktop-preview-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  preview:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install host SDL and VLC
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libsdl2-dev libsdl2-ttf-dev libsdl2-image-dev libcurl4-openssl-dev libvlc-dev vlc-plugin-base libswscale-dev libavutil-dev ffmpeg ca-certificates
+      - name: Build original PS5 UI on Linux
+        run: bash desktop/build.sh
+      - name: Portable catalogue regression checks
+        run: bash scripts/test-portable.sh
+      - name: Create offline test clip
+        run: |
+          mkdir -p "${{ runner.temp }}/preview-results"
+          ffmpeg -hide_banner -loglevel error -y -f lavfi -i testsrc2=size=1280x720:rate=24 -f lavfi -i sine=frequency=440:sample_rate=48000 -t 15 -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac "${{ runner.temp }}/preview-test.mp4"
+      - name: Render screenshots and test local VLC playback
+        working-directory: build/desktop-preview
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+          UAPLAY_PREVIEW_SMOKE: ${{ runner.temp }}/preview-results
+          UAPLAY_PREVIEW_VIDEO: ${{ runner.temp }}/preview-test.mp4
+        run: |
+          set -o pipefail
+          timeout 90 ./uaplay-preview 2>&1 | tee "$UAPLAY_PREVIEW_SMOKE/test.log"
+      - name: Convert screenshots to PNG
+        if: always()
+        run: |
+          shopt -s nullglob
+          for bmp in "${{ runner.temp }}/preview-results/"*.bmp; do
+            ffmpeg -hide_banner -loglevel error -y -i "$bmp" "${bmp%.bmp}.png" && rm "$bmp"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: UAPlay-PS5-Desktop-UI-tests
+          path: ${{ runner.temp }}/preview-results/
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: UAPlay-PS5-Desktop-Linux
+          path: build/desktop-preview/
+          retention-days: 14
