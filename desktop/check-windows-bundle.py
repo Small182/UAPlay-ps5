@@ -68,6 +68,15 @@ def verify(path):
         verify(target)
 
 verify(root / "UAPlay.exe")
+ui_imports = {entry.dll.decode("ascii").lower()
+              for entry in pe(root / "UAPlay.exe").DIRECTORY_ENTRY_IMPORT}
+if any(name.startswith(("libvlc", "avutil-", "swscale-")) for name in ui_imports):
+    errors.append("UI EXE still imports VLC/FFmpeg at startup")
+verify(root / "uaplay-player.dll")
+for plugin in sorted((root / "plugins").rglob("*.dll")):
+    verify(plugin)
+for dll in sorted(root.glob("*.dll")):
+    verify(dll)
 for path in sorted(seen):
     print(f"Verified {Path(path).name}")
 if errors:

@@ -389,6 +389,16 @@ int mpv_initialize(mpv_handle *p){
 #endif
         "--stats","--no-drop-late-frames","--no-skip-frames","--verbose=2"
     };
+#if defined(UAPLAY_DESKTOP_PREVIEW) && defined(_WIN32)
+    /* The packaged MSYS2 VLC looks for its modules using this path. */
+    char *base=SDL_GetBasePath();
+    if(base){
+        char plugin_path[2048];
+        snprintf(plugin_path,sizeof(plugin_path),"%splugins",base);
+        SDL_setenv("VLC_PLUGIN_PATH",plugin_path,1);
+        SDL_free(base);
+    }
+#endif
     init_status("libvlc_new",NULL);
     p->vlc=libvlc_new(sizeof(args)/sizeof(args[0]),args);
     if(!p->vlc){

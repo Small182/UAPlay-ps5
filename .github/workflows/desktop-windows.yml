@@ -37,6 +37,7 @@ jobs:
             mingw-w64-ucrt-x86_64-SDL2_image
             mingw-w64-ucrt-x86_64-curl
             mingw-w64-ucrt-x86_64-ffmpeg
+            mingw-w64-ucrt-x86_64-vlc
             mingw-w64-ucrt-x86_64-ca-certificates
       - name: Compile and bundle native Windows EXE
         run: bash desktop/build-windows.sh

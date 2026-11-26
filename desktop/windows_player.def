@@ -1,0 +1,22 @@
+LIBRARY "uaplay-player.dll"
+EXPORTS
+    desktop_player_bind
+    mpv_create
+    mpv_initialize
+    mpv_set_option_string
+    mpv_set_property_string
+    mpv_get_property
+    mpv_command_async
+    mpv_request_log_messages
+    mpv_wait_event
+    mpv_error_string
+    mpv_terminate_destroy
+    mpv_render_context_create
+    mpv_render_context_render
+    mpv_render_context_free
+    ps5_kitchen_tracks
+    ps5_kitchen_select_track
+    ps5_kitchen_set_volume
+    ps5_kitchen_last_error
+    ps5_kitchen_diagnostic
+    ps5_vlc_picture_info
