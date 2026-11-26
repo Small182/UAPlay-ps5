@@ -172,7 +172,7 @@ static void ui_labeled_icon(Paint *p,UiIcon i,const char *s,int x,int y,int w,in
 }
 /* Render focus last: no clipping by a subsequently drawn card. The logical
    focus switches immediately; the visual ring eases to the target. */
-static struct {SDL_FRect from,visual;SDL_Rect target;int valid,scene,seen;Uint32 changed;} ui_focus;
+static struct {SDL_FRect from,visual;SDL_Rect target,pending;float from_radius,visual_radius,target_radius,pending_radius;int valid,scene,seen;Uint32 changed;} ui_focus;
 static void ui_focus_begin(int scene){
  if(ui_focus.scene!=scene){ui_focus.valid=0;ui_focus.scene=scene;}
  ui_focus.seen=0;
@@ -181,20 +181,33 @@ static void ui_focus_sample(Uint32 now){
  float t=fminf(1.f,(now-ui_focus.changed)/175.f),f=1.f-(1.f-t)*(1.f-t)*(1.f-t);
  SDL_FRect a=ui_focus.from;SDL_Rect b=ui_focus.target;
  ui_focus.visual=(SDL_FRect){a.x+(b.x-a.x)*f,a.y+(b.y-a.y)*f,a.w+(b.w-a.w)*f,a.h+(b.h-a.h)*f};
+ ui_focus.visual_radius=ui_focus.from_radius+(ui_focus.target_radius-ui_focus.from_radius)*f;
 }
 static void ui_focus_set(SDL_Rect r){
- Uint32 now=SDL_GetTicks();
- if(!ui_focus.valid){
-  ui_focus.from=ui_focus.visual=(SDL_FRect){r.x,r.y,r.w,r.h};ui_focus.target=r;ui_focus.changed=now;ui_focus.valid=1;
- }else if(!SDL_RectEquals(&r,&ui_focus.target)){
-  ui_focus_sample(now);ui_focus.from=ui_focus.visual;ui_focus.target=r;ui_focus.changed=now;
-  if(fabsf(ui_focus.from.y-r.y)>280||fabsf(ui_focus.from.w-r.w)>550)
-   ui_focus.from=(SDL_FRect){r.x,r.y,r.w,r.h};
- }
- ui_focus.seen=1;
+ /* Collect exactly one target per draw; never restart easing mid-frame. */
+ ui_focus.pending=r;ui_focus.pending_radius=r.h>94?16.f:14.f;ui_focus.seen=1;
 }
 static void ui_focus_finish(void){
  if(!ui_focus.seen){ui_focus.valid=0;return;}
+ SDL_Rect target=ui_focus.pending;
+ float rad=ui_focus.pending_radius;
+ Uint32 at=SDL_GetTicks();
+ if(!ui_focus.valid){
+  ui_focus.from=ui_focus.visual=(SDL_FRect){target.x,target.y,target.w,target.h};
+  ui_focus.from_radius=ui_focus.visual_radius=ui_focus.target_radius=rad;
+  ui_focus.target=target;ui_focus.changed=at;ui_focus.valid=1;
+ }else if(!SDL_RectEquals(&target,&ui_focus.target)||rad!=ui_focus.target_radius){
+  ui_focus_sample(at);
+  ui_focus.from=ui_focus.visual;ui_focus.from_radius=ui_focus.visual_radius;
+  /* Circle controls are intentional only in the player. Do not morph
+     between a circular control and a rectangle. */
+  int was_circle=ui_focus.target_radius>=fminf(ui_focus.target.w,ui_focus.target.h)*.5f-1;
+  int is_circle=rad>=fminf(target.w,target.h)*.5f-1;
+  if(was_circle!=is_circle||fabsf(ui_focus.from.y-target.y)>280||fabsf(ui_focus.from.w-target.w)>550){
+   ui_focus.from=(SDL_FRect){target.x,target.y,target.w,target.h};ui_focus.from_radius=rad;
+  }
+  ui_focus.target=target;ui_focus.target_radius=rad;ui_focus.changed=at;
+ }
  Uint32 now=SDL_GetTicks();ui_focus_sample(now);SDL_FRect v=ui_focus.visual;
  float age=(float)(now-ui_press_at);float inset=ui_press_at&&age<145?2.5f*sinf(3.14159265f*age/145.f):0;
  SDL_FRect r={v.x-3+inset,v.y-3+inset,v.w+6-2*inset,v.h+6-2*inset};
@@ -202,8 +215,7 @@ static void ui_focus_finish(void){
  float a,b,c;accent_real(ui_accent_index,&a,&b,&c);
  if(ui_theme_enabled&&ui_light_theme&&ui_accent_index==ACCENT_WHITE)a=b=c=.35f;
  SDL_Color color={color_byte(a),color_byte(b),color_byte(c),255};
- float radius=r.h>94?15:16;
- if(fabsf(r.w-r.h)<8 && r.h>=50)radius=r.h*.5f;
+ float radius=ui_focus.visual_radius+3.f-inset;
  if(radius>r.w/2)radius=r.w/2;if(radius>r.h/2)radius=r.h/2;
  SDL_FRect glow={r.x-2,r.y-2,r.w+4,r.h+4};SDL_Color halo=color;halo.a=ui_theme_enabled&&ui_light_theme?25:46;
  rounded_outline_f(glow,radius+2,2,halo);rounded_outline_f(r,radius,2,color);
@@ -314,12 +326,13 @@ static void ui_gradient_round(SDL_Rect rect,float radius,SDL_Color top,SDL_Color
     }
     SDL_RenderGeometry(ui_renderer,NULL,v,1+2*UI_PERIM,ix,9*UI_PERIM);
 }
-static int ui_is_focused(SDL_Rect r){return ui_focus.seen&&SDL_RectEquals(&r,&ui_focus.target);}
+static int ui_is_focused(SDL_Rect r){return ui_focus.seen&&SDL_RectEquals(&r,&ui_focus.pending);}
 static int ui_button_depth(SDL_Rect rect,int radius,SDL_Color base,int focused){
+    if(ui_is_focused(rect))ui_focus.pending_radius=(float)radius;
     int light=ui_theme_enabled&&ui_light_theme;
     float age=(float)(SDL_GetTicks()-ui_press_at);
     float press=focused&&ui_press_at&&age<145.f?sinf(3.14159265f*age/145.f):0.f;
-    int drop=(int)roundf(2.f*press),lift=focused?1:0;
+    int drop=(int)roundf(2.f*press),lift=0;
     /* Keep the logical hit rectangle fixed. Only the face moves 0–2 px. */
     SDL_Rect shadow={rect.x-1,rect.y+2+lift,rect.w+2,rect.h+2};
     rounded_box(shadow,radius+1,ui_rgb(0x000000,(int)((light?23:48)*(1.f-.65f*press))),NULL);
@@ -327,8 +340,8 @@ static int ui_button_depth(SDL_Rect rect,int radius,SDL_Color base,int focused){
     rounded_box(shadow,radius,ui_rgb(0x000000,(int)((light?13:30)*(1.f-.65f*press))),NULL);
     SDL_Rect face=rect;face.y+=drop;
     SDL_Color white=ui_rgb(0xffffff,base.a),black=ui_rgb(0x000000,base.a);
-    SDL_Color top=ui_mix(base,white,(light?.15f:.105f)+(focused?.035f:0.f));
-    SDL_Color bottom=ui_mix(base,black,light?.055f:.17f);
+    SDL_Color top=ui_mix(base,white,(light?.20f:.17f));
+    SDL_Color bottom=ui_mix(base,black,light?.09f:.24f);
     top=ui_mix(top,black,.12f*press);bottom=ui_mix(bottom,black,.09f*press);
     ui_gradient_round(face,radius,top,bottom);
     SDL_Rect inside={face.x+1,face.y+1,face.w-2,face.h-2};

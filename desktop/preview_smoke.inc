@@ -79,6 +79,34 @@ static int preview_focus_motion(Paint *paint,Movie *movies,Source *sources){
     fprintf(stderr,"[preview] focus motion: %s\n",ok?"PASS":"FAIL");
     return ok;
 }
+static int preview_iptv_focus(Paint *p,Movie *movies,Source *sources){
+    int ok=1;
+    ps5_tv_selection=4;ps5_tv_filter_focus=0;
+    tv_focus_move(SDL_CONTROLLER_BUTTON_DPAD_UP,12);
+    ok &= ps5_tv_filter_focus==2||ps5_tv_filter_focus==3;
+    tv_focus_move(SDL_CONTROLLER_BUTTON_DPAD_UP,12);
+    ok &= ps5_tv_filter_focus==4;
+    tv_focus_move(SDL_CONTROLLER_BUTTON_DPAD_RIGHT,12);
+    ok &= ps5_tv_header_focus==11;
+    tv_focus_move(SDL_CONTROLLER_BUTTON_DPAD_DOWN,12);
+    ok &= ps5_tv_filter_focus>=1&&ps5_tv_filter_focus<=3;
+    tv_focus_move(SDL_CONTROLLER_BUTTON_DPAD_DOWN,12);
+    ok &= ps5_tv_filter_focus==0&&ps5_tv_selection<6;
+    tv_focus_normalize(0);ok &= ps5_tv_filter_focus==1;
+    draw(p,IPTV_CHANNELS,movies,12,0,sources,2,0,"IPTV","");
+    SDL_Rect filter=tv_filter_rect(0);
+    ok &= SDL_RectEquals(&ui_focus.target,&filter)&&ui_focus.target_radius==14;
+    ps5_tv_filter_focus=4;ps5_tv_header_focus=6;
+    draw(p,IPTV_CHANNELS,movies,12,0,sources,2,0,"IPTV","");
+    SDL_Rect gear={1058,17,53,47};
+    ok &= SDL_RectEquals(&ui_focus.target,&gear)&&ui_focus.target_radius==15;
+    ui_focus_sample(ui_focus.changed+55);
+    ok &= ui_focus.visual_radius<=16.f;
+    ok &= preview_capture("iptv-header-focus");
+    ps5_tv_reset_selection();ps5_tv_header_focus=IPTV_TAB_FOCUS;
+    fprintf(stderr,"[preview] IPTV focus routing and exact gear radius: %s\n",ok?"PASS":"FAIL");
+    return ok;
+}
 static int preview_card_layout(Paint *p){
     int ok=1;
     CardGrid grids[]={card_grid(2,0,5,0),card_grid(1,0,0,0),
@@ -146,6 +174,7 @@ static int preview_smoke(Paint *paint){
         ok &= preview_page(paint,SOURCES,movies,sources,light?"sources-light":"sources-dark");
     }
     ok &= preview_focus_motion(paint,movies,sources);
+    ok &= preview_iptv_focus(paint,movies,sources);
     const char *clip=getenv("UAPLAY_PREVIEW_VIDEO");
     if(!clip||!*clip){fprintf(stderr,"Missing UAPLAY_PREVIEW_VIDEO\n");return 1;}
     mpv_handle *p=NULL;mpv_render_context *render=NULL;

@@ -87,7 +87,11 @@ static int track_count,selected_track,subtitle_picker;
 static IptvCatalog ps5_tv_channels={0},ps5_tv_favorites={0};
 static int ps5_tv_country=0,ps5_tv_selection=0,ps5_tv_country_count=0;
 static int ps5_tv_genre=IPTV_ALL,ps5_tv_genre_selection=0,ps5_tv_show_favorites=0;
-static int ps5_tv_filter_focus=0; /* 0 grid, 1 country, 2 genre, 3 favorite */
+static int ps5_tv_filter_focus=0; /* 0 grid, 1 country, 2 genre, 3 favorite, 4 header */
+static int ps5_tv_header_focus=15,ps5_tv_country_from_channels=0;
+static const int tv_filter_x[]={32,412,782},tv_filter_w[]={364,354,236};
+static SDL_Rect tv_filter_rect(int i){return (SDL_Rect){tv_filter_x[i],101,tv_filter_w[i],46};}
+static SDL_Rect tv_card_rect(int i){return (SDL_Rect){38+(i%6)*202,177+(i%12/6)*211,184,184};}
 static int ps5_tv_visible_count(void){
     const IptvCatalog *active=ps5_tv_show_favorites?&ps5_tv_favorites:&ps5_tv_channels;
     if(ps5_tv_show_favorites || ps5_tv_genre==IPTV_ALL)return active->count;
@@ -240,6 +244,60 @@ static int header_focus_step(int focus,int key){
         if(focus==5)return 6;
     }
     return focus;
+}
+/* IPTV rows are spatial, not a wrapping linear list. Empty grids keep
+   focus on a real filter. Header and filters never own focus together. */
+static int tv_nearest_filter(int cx){
+    int best=0,distance=2000;
+    for(int i=0;i<3;i++){SDL_Rect r=tv_filter_rect(i);int d=abs(cx-r.x-r.w/2);if(d<distance){best=i;distance=d;}}
+    return best+1;
+}
+static void tv_focus_normalize(int count){
+    if(count<=0){ps5_tv_selection=0;if(!ps5_tv_filter_focus)ps5_tv_filter_focus=1;}
+    else if(ps5_tv_selection>=count)ps5_tv_selection=count-1;
+}
+static void tv_focus_move(int key,int count){
+    tv_focus_normalize(count);
+    int up=key==SDL_CONTROLLER_BUTTON_DPAD_UP,down=key==SDL_CONTROLLER_BUTTON_DPAD_DOWN;
+    int left=key==SDL_CONTROLLER_BUTTON_DPAD_LEFT,right=key==SDL_CONTROLLER_BUTTON_DPAD_RIGHT;
+    if(ps5_tv_filter_focus==4){
+        if(left||right)ps5_tv_header_focus=header_focus_step(ps5_tv_header_focus,key);
+        if(down){
+            int cx=676;
+            int tab=main_tab_index(ps5_tv_header_focus);
+            if(tab>=0)cx=main_tabs[tab].x+main_tabs[tab].w/2;
+            else if(ps5_tv_header_focus==5)cx=965;else if(ps5_tv_header_focus==6)cx=1084;
+            ps5_tv_filter_focus=tv_nearest_filter(cx);
+        }
+    }else if(ps5_tv_filter_focus){
+        if(left&&ps5_tv_filter_focus>1)ps5_tv_filter_focus--;
+        if(right&&ps5_tv_filter_focus<3)ps5_tv_filter_focus++;
+        if(up){ps5_tv_filter_focus=4;ps5_tv_header_focus=IPTV_TAB_FOCUS;}
+        if(down&&count>0){
+            SDL_Rect r=tv_filter_rect(ps5_tv_filter_focus-1);
+            int start=ps5_tv_selection/12*12,available=count-start;
+            int best=0,distance=2000;
+            for(int i=0;i<6&&i<available;i++){
+                SDL_Rect tile=tv_card_rect(i);
+                int d=abs(r.x+r.w/2-tile.x-tile.w/2);
+                if(d<distance){best=i;distance=d;}
+            }
+            ps5_tv_selection=start+best;ps5_tv_filter_focus=0;
+        }
+    }else{
+        int local=ps5_tv_selection%12;
+        if(left&&local%6>0)ps5_tv_selection--;
+        if(right&&local%6<5&&ps5_tv_selection+1<count)ps5_tv_selection++;
+        if(up){
+            if(local>=6)ps5_tv_selection-=6;
+            else {SDL_Rect r=tv_card_rect(local);ps5_tv_filter_focus=tv_nearest_filter(r.x+r.w/2);}
+        }
+        if(down&&ps5_tv_selection+6<count){
+            ps5_tv_selection+=6;
+        }else if(down&&local<6&&count>ps5_tv_selection/12*12+6){
+            ps5_tv_selection=count-1;
+        }
+    }
 }
 static int clear_history_confirm=0;
 /* 0 popularity, 1 TMDB rating. */
@@ -2040,14 +2098,13 @@ static void draw_content(Paint *p,Page page,Movie *movies,int n,int chosen,
         const char *tabs[]={TR("Головна","Home"),TR("Серіали","TV Shows"),TR("Фільми","Movies"),
             TR("Мультфільми","Animation"),"IPTV",TR("Вибране","Favorites")};
         int active=page==IPTV_CHANNELS?IPTV_TAB_FOCUS:7+tab_for_category(ui_category);
-        int focused=page==CATALOG?catalog_hero_focus:IPTV_TAB_FOCUS;
+        int focused=page==CATALOG?catalog_hero_focus:(ps5_tv_filter_focus==4?ps5_tv_header_focus:0);
         for(int i=0;i<MAIN_TAB_COUNT;i++){
             int x=main_tabs[i].x,w=main_tabs[i].w,focus=main_tabs[i].focus;
             if(focus==focused)selection_frame(p,x,19,w,43);
 #ifdef UAPLAY_PS5_SOFTWARE
-            int dy=0;
-            if(focus==active||focus==focused)
-                dy=ui_button_depth((SDL_Rect){x,19,w,43},15,ui_rgb(ui_light_theme?0xdbe4ed:0x2b3948,255),focus==focused);
+            int dy=ui_button_depth((SDL_Rect){x,19,w,43},15,
+                ui_rgb(focus==active?(ui_light_theme?0xdbe4ed:0x344353):(ui_light_theme?0xe0e7ef:0x25323f),255),0);
             text_center_button(p,tabs[i],x,19+dy,w,43,
 #else
             if(focus==active)box_alpha(p,x,19,w,43,.19f,.24f,.28f,1.f,16);
@@ -2065,10 +2122,10 @@ static void draw_content(Paint *p,Page page,Movie *movies,int n,int chosen,
 #ifdef UAPLAY_PS5_SOFTWARE
         SDL_Color top_button=ui_rgb(ui_light_theme?0xe0e7ef:0x25323f,255);
         if(focused==5)selection_frame(p,887,17,157,47);
-        int search_dy=ui_button_depth((SDL_Rect){887,17,157,47},15,top_button,focused==5);
+        int search_dy=ui_button_depth((SDL_Rect){887,17,157,47},15,top_button,0);
         ui_labeled_icon(p,I_SEARCH,TR("Пошук","Search"),887,17+search_dy,157,47,ui_fg());
         if(focused==6)selection_frame(p,1058,17,53,47);
-        int gear_dy=ui_button_depth((SDL_Rect){1058,17,53,47},15,top_button,focused==6);
+        int gear_dy=ui_button_depth((SDL_Rect){1058,17,53,47},15,top_button,0);
         ui_icon(I_GEAR,1084.5f,40.f+gear_dy,27,ui_fg());
 #else
         box_alpha(p,887,17,157,47,.13f,.16f,.19f,1.f,15);
@@ -2106,11 +2163,11 @@ static void draw_content(Paint *p,Page page,Movie *movies,int n,int chosen,
             const char *labels[]={country_label,genre_label,
                 ps5_tv_show_favorites?TR("Усі канали","All channels"):
                                       TR("Вибране","Favorites")};
-            const int fx[]={32,412,782},fw[]={364,354,236};
             for(int i=0;i<3;i++){
-                if(ps5_tv_filter_focus==i+1)
-                    selection_frame(p,fx[i],101,fw[i],46);
-                button(p,labels[i],fx[i],101,fw[i],46,
+                SDL_Rect r=tv_filter_rect(i);
+                if(ps5_tv_filter_focus==i+1 || (!ps5_tv_visible_count() && !ps5_tv_filter_focus && i==0))
+                    selection_frame(p,r.x,r.y,r.w,r.h);
+                button(p,labels[i],r.x,r.y,r.w,r.h,
                        i==2 && ps5_tv_show_favorites);
             }
             int count=ps5_tv_visible_count();
@@ -2125,10 +2182,15 @@ static void draw_content(Paint *p,Page page,Movie *movies,int n,int chosen,
                 const IptvChannel *channel=ps5_tv_channel(i);
                 if(!channel)continue;
                 const int local=i-page_start;
-                int x=38+(local%6)*202,y=177+(local/6)*211;
+                SDL_Rect tile=tv_card_rect(local);
+                int x=tile.x,y=tile.y;
+                #ifdef UAPLAY_PS5_SOFTWARE
+                ui_button_depth(tile,16,ui_rgb(ui_light_theme?0xdce4ec:0x303841,255),0);
+#else
                 box_alpha(p,x,y,184,184,.19f,.22f,.26f,1.f,16);
+#endif
                 if(i==ps5_tv_selection && !ps5_tv_filter_focus)
-                    selection_frame(p,x,y,184,184);
+                    selection_frame(p,x,y,tile.w,tile.h);
                 int image_w=0,image_h=0;
                 UiTexture logo=logo_texture(channel->logo,&logo_budget,&image_w,&image_h);
                 if(logo && image_w>0 && image_h>0){
@@ -2165,11 +2227,13 @@ static void draw_content(Paint *p,Page page,Movie *movies,int n,int chosen,
             const int tab_x[]={32,244,417},tab_w[]={196,158,208};
             for(int i=0;i<3;i++){
                 int selected=i<2 && ui_category==11+i;
-                box_alpha(p,tab_x[i],101,tab_w[i],47,
-                          selected?.20f:.12f,selected?.28f:.15f,
-                          selected?.35f:.19f,1.f,13);
                 if(catalog_hero_focus==16+i)
                     selection_frame(p,tab_x[i],101,tab_w[i],47);
+                #ifdef UAPLAY_PS5_SOFTWARE
+                ui_button_depth((SDL_Rect){tab_x[i],101,tab_w[i],47},13,ui_rgb(selected?(ui_light_theme?0xdbe4ed:0x344353):(ui_light_theme?0xe0e7ef:0x25323f),255),0);
+#else
+                box_alpha(p,tab_x[i],101,tab_w[i],47,selected?.20f:.12f,selected?.28f:.15f,selected?.35f:.19f,1.f,13);
+#endif
                 text_center_button(p,names[i],tab_x[i],101,tab_w[i],47,
                                    p->font_small,.96f,.97f,.99f);
             }
@@ -2208,8 +2272,12 @@ static void draw_content(Paint *p,Page page,Movie *movies,int n,int chosen,
                 const char *animation_tabs[]={TR("Мультфільми","Movies"),TR("Мультсеріали","Series"),TR("Аніме","Anime")};
                 for(int i=0;i<tabs_n;i++){
                     int x=32+i*240;
-                    box_alpha(p,x,151,224,42,.13f,.16f,.19f,1.f,13);
                     if(catalog_hero_focus==16+i)selection_frame(p,x,151,224,42);
+                    #ifdef UAPLAY_PS5_SOFTWARE
+                ui_button_depth((SDL_Rect){x,151,224,42},13,ui_rgb(ui_light_theme?0xe0e7ef:0x25323f,255),0);
+#else
+                box_alpha(p,x,151,224,42,.13f,.16f,.19f,1.f,13);
+#endif
                     text_center_button(p,tab_for_category(ui_category)==2?film_labels[i]:animation_tabs[i],x,151,224,42,p->font_small,.96f,.97f,.99f);
                 }
             }
@@ -2281,11 +2349,13 @@ static void draw_content(Paint *p,Page page,Movie *movies,int n,int chosen,
                 for(int i=0;i<section_tabs;i++){
                     int selected=ui_category==category_for_subsection(ui_category,i);
                     int x=films?film_x[i]:anim_x[i],w=films?film_w[i]:anim_w[i];
-                    box_alpha(p,x,328,w,43,
-                              selected?.20f:.12f,selected?.28f:.15f,
-                              selected?.35f:.19f,1.f,13);
                     if(catalog_hero_focus==i+16)
                         selection_frame(p,x,328,w,43);
+                    #ifdef UAPLAY_PS5_SOFTWARE
+                ui_button_depth((SDL_Rect){x,328,w,43},13,ui_rgb(selected?(ui_light_theme?0xdbe4ed:0x344353):(ui_light_theme?0xe0e7ef:0x25323f),255),0);
+#else
+                box_alpha(p,x,328,w,43,selected?.20f:.12f,selected?.28f:.15f,selected?.35f:.19f,1.f,13);
+#endif
                     text_center_button(p,films?film_labels[i]:animation_tabs[i],x,328,
                                        w,43,p->font_small,
                                        .96f,.97f,.99f);
@@ -3650,7 +3720,7 @@ int main(void) {
                 }else if(page==CATALOG){
                     if(!query[0] && ty<78 && tx>=193 && tx<830){
                         int focus=main_tab_at(tx);
-                        if(focus==IPTV_TAB_FOCUS){page=IPTV_COUNTRIES;continue;}
+                        if(focus==IPTV_TAB_FOCUS){ps5_tv_country_from_channels=0;page=IPTV_COUNTRIES;continue;}
                         if(focus>=7 && focus<=11){
                             int next=category_for_tab(focus-7);
                             if(focus==7)home_shelf=0;
@@ -3762,6 +3832,23 @@ int main(void) {
                             }
                         }
                     }
+                }else if(page==IPTV_CHANNELS){
+                    SDL_Point pos={tx,ty};int count=ps5_tv_visible_count();
+                    if(ty>=17&&ty<64){
+                        int f=main_tab_at(tx);
+                        if(tx>=887&&tx<1044)f=5;else if(tx>=1058&&tx<1111)f=6;
+                        if(f){ps5_tv_header_focus=f;ps5_tv_filter_focus=4;key=SDL_CONTROLLER_BUTTON_A;}
+                    }else{
+                        for(int i=0;i<3;i++){SDL_Rect r=tv_filter_rect(i);if(SDL_PointInRect(&pos,&r)){ps5_tv_filter_focus=i+1;key=SDL_CONTROLLER_BUTTON_A;break;}}
+                        for(int i=0;i<12;i++){SDL_Rect r=tv_card_rect(i);int index=ps5_tv_selection/12*12+i;if(index<count&&SDL_PointInRect(&pos,&r)){ps5_tv_selection=index;ps5_tv_filter_focus=0;key=SDL_CONTROLLER_BUTTON_A;break;}}
+                    }
+                }else if(page==IPTV_COUNTRIES||page==IPTV_GENRES){
+                    int limit=ps5_tv_country_count,genre_count=0;iptv_genres(&genre_count);
+                    int *selected=page==IPTV_COUNTRIES?&ps5_tv_country:&ps5_tv_genre_selection;
+                    if(page==IPTV_GENRES)limit=genre_count+1;
+                    int row=(ty-UI_ROW_Y)/UI_ROW_STEP,index=*selected/UI_ROWS*UI_ROWS+row;
+                    if(ty<92&&tx<100)key=SDL_CONTROLLER_BUTTON_B;
+                    else if(tx>=UI_EDGE&&tx<1248&&ty>=UI_ROW_Y&&row<UI_ROWS&&index<limit&&(ty-UI_ROW_Y)%UI_ROW_STEP<UI_ROW_HEIGHT){*selected=index;key=SDL_CONTROLLER_BUTTON_A;}
                 }else if(page==SOURCES){
                     int slot=(ty-UI_ROW_Y)/UI_ROW_STEP,new_source=source/UI_ROWS*UI_ROWS+slot;
                     if(ty>=UI_ROW_Y && (ty-UI_ROW_Y)%UI_ROW_STEP<UI_ROW_HEIGHT &&
@@ -4025,7 +4112,7 @@ int main(void) {
             }
             if(page==IPTV_COUNTRIES){
                 if(key==SDL_CONTROLLER_BUTTON_B || key==SDL_CONTROLLER_BUTTON_BACK){
-                    page=CATALOG;continue;
+                    page=ps5_tv_country_from_channels?IPTV_CHANNELS:CATALOG;ps5_tv_country_from_channels=0;continue;
                 }
                 if(key==SDL_CONTROLLER_BUTTON_DPAD_UP && ps5_tv_country>0)ps5_tv_country--;
                 if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN &&
@@ -4044,7 +4131,7 @@ int main(void) {
                         ps5_tv_show_favorites=0;
                         snprintf(message,sizeof(message),
                                  cached?"IPTV: завантажено з кешу":"IPTV: канали завантажено");
-                        page=IPTV_CHANNELS;
+                        page=IPTV_CHANNELS;ps5_tv_country_from_channels=0;
                     }else snprintf(message,sizeof(message),
                                   "IPTV: не вдалося завантажити канали (код %d)",result);
                 }
@@ -4061,7 +4148,7 @@ int main(void) {
                    ps5_tv_genre_selection<genre_count)ps5_tv_genre_selection++;
                 if(key==SDL_CONTROLLER_BUTTON_A){
                     ps5_tv_genre=ps5_tv_genre_selection-1;
-                    ps5_tv_reset_selection();
+                    ps5_tv_reset_selection();tv_focus_normalize(ps5_tv_visible_count());
                     page=IPTV_CHANNELS;
                 }
                 continue;
@@ -4076,23 +4163,10 @@ int main(void) {
                     ps5_tv_genre_selection=ps5_tv_genre+1;
                     page=IPTV_GENRES;continue;
                 }
-                if(key==SDL_CONTROLLER_BUTTON_DPAD_UP){
-                    if(!ps5_tv_filter_focus){
-                        if(ps5_tv_selection>=6)ps5_tv_selection-=6;
-                        else ps5_tv_filter_focus=1;
-                    }else ps5_tv_filter_focus=0;
-                }
-                if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN){
-                    if(ps5_tv_filter_focus)ps5_tv_filter_focus=0;
-                    else if(ps5_tv_selection+6<count)ps5_tv_selection+=6;
-                }
-                if(key==SDL_CONTROLLER_BUTTON_DPAD_LEFT){
-                    if(ps5_tv_filter_focus>1)ps5_tv_filter_focus--;
-                    else if(!ps5_tv_filter_focus && ps5_tv_selection>0)ps5_tv_selection--;
-                }
-                if(key==SDL_CONTROLLER_BUTTON_DPAD_RIGHT){
-                    if(ps5_tv_filter_focus && ps5_tv_filter_focus<3)ps5_tv_filter_focus++;
-                    else if(!ps5_tv_filter_focus && ps5_tv_selection+1<count)ps5_tv_selection++;
+                tv_focus_normalize(count);
+                if(key==SDL_CONTROLLER_BUTTON_DPAD_UP||key==SDL_CONTROLLER_BUTTON_DPAD_DOWN||
+                   key==SDL_CONTROLLER_BUTTON_DPAD_LEFT||key==SDL_CONTROLLER_BUTTON_DPAD_RIGHT){
+                    tv_focus_move(key,count);continue;
                 }
                 if(key==SDL_CONTROLLER_BUTTON_LEFTSHOULDER && count>0){
                     ps5_tv_selection=(ps5_tv_selection/12>0?ps5_tv_selection/12-1:0)*12;
@@ -4108,7 +4182,7 @@ int main(void) {
                     if(channel){
                         int was=iptv_favorite_index(&ps5_tv_favorites,channel->id)>=0;
                         if(iptv_favorite_toggle(&ps5_tv_favorites,channel)){
-                            if(ps5_tv_show_favorites && was)ps5_tv_reset_selection();
+                            if(ps5_tv_show_favorites && was){ps5_tv_reset_selection();tv_focus_normalize(ps5_tv_visible_count());}
                             snprintf(message,sizeof(message),was?
                                 TR("Видалено з вибраного","Removed from favorites"):
                                 TR("Додано у вибране","Added to favorites"));
@@ -4118,10 +4192,22 @@ int main(void) {
                 }
                 if(key==SDL_CONTROLLER_BUTTON_A && ps5_tv_filter_focus){
                     switch(ps5_tv_filter_focus){
-                        case 1:page=IPTV_COUNTRIES;break;
+                        case 1:ps5_tv_country_from_channels=1;page=IPTV_COUNTRIES;break;
                         case 2:ps5_tv_genre_selection=ps5_tv_genre+1;page=IPTV_GENRES;break;
                         case 3:ps5_tv_show_favorites=!ps5_tv_show_favorites;
-                               ps5_tv_reset_selection();break;
+                               ps5_tv_reset_selection();ps5_tv_filter_focus=3;break;
+                        case 4:{
+                            int f=ps5_tv_header_focus;
+                            if(f==IPTV_TAB_FOCUS){ps5_tv_filter_focus=tv_nearest_filter(676);break;}
+                            if(f==6){settings_selected=0;page=SETTINGS;break;}
+                            if(f==5){
+                                char new_query[192]={0};
+                                if(keyboard(new_query,sizeof(new_query))){category=0;snprintf(query,sizeof(query),"%s",new_query);message[0]=0;n=load_category(category,query,movies,message,sizeof(message));chosen=0;catalog_hero_focus=0;expanded_catalog=1;page=CATALOG;}
+                                break;
+                            }
+                            if(f>=7&&f<=11){category=category_for_tab(f-7);if(category==0)home_shelf=0;query[0]=message[0]=0;n=load_category(category,query,movies,message,sizeof(message));chosen=0;expanded_catalog=0;catalog_hero_focus=f;page=CATALOG;}
+                            break;
+                        }
                     }
                     continue;
                 }
@@ -4578,7 +4664,7 @@ int main(void) {
                 }
                 if(key==SDL_CONTROLLER_BUTTON_BACK){page=SETTINGS;continue;}
                 if(key==SDL_CONTROLLER_BUTTON_A && catalog_hero_focus==IPTV_TAB_FOCUS){
-                    page=IPTV_COUNTRIES;message[0]=0;continue;
+                    ps5_tv_country_from_channels=0;page=IPTV_COUNTRIES;message[0]=0;continue;
                 }
                 if(key==SDL_CONTROLLER_BUTTON_A && catalog_hero_focus==5)
                     key=SDL_CONTROLLER_BUTTON_X;
