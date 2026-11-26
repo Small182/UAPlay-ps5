@@ -2228,11 +2228,15 @@ static void draw_content(Paint *p,Page page,Movie *movies,int n,int chosen,
                     float scale=150.f/(float)(image_w>image_h?image_w:image_h);
                     int rw=(int)fmaxf(1,image_w*scale);
                     int rh=(int)fmaxf(1,image_h*scale);
-                    SDL_Rect target={x+(184-rw)/2,y+7+(150-rh)/2,rw,rh};
+                    /* Logos occupy the card without a redundant title overlay. */
+                    SDL_Rect target={x+(tile.w-rw)/2,y+(tile.h-rh)/2,rw,rh};
                     SDL_RenderCopy(ui_renderer,(SDL_Texture*)(uintptr_t)logo,NULL,&target);
-                }else text_center_button(p,"TV",x,y+18,184,72,p->font_big,.75f,.79f,.82f);
-                text_center_button(p,channel->title,x+8,y+98,168,55,p->font_small,
-                                   .95f,.97f,.99f);
+                }else{
+                    /* Keep channels identifiable when a logo is unavailable. */
+                    text_center_button(p,"TV",x,y+18,184,72,p->font_big,.75f,.79f,.82f);
+                    text_center_button(p,channel->title,x+8,y+98,168,55,p->font_small,
+                                       .95f,.97f,.99f);
+                }
                 const int favorite=iptv_favorite_index(&ps5_tv_favorites,channel->id)>=0;
                 box_alpha(p,x+144,y+7,31,31,.10f,.13f,.17f,.93f,10);
 #ifdef UAPLAY_PS5_SOFTWARE
