@@ -806,6 +806,7 @@ static int load_category(int category,const char *query,Movie *movies,char *mess
     catalog_loader_reset(data_category,query,count,(category!=0 || query[0]) && category!=11 && category!=12 && !message[0]);
     return count;
 }
+enum { UI_SCRIPT_COUNT=8, UI_SCRIPT_JAPANESE=7 };
 typedef struct {
     UiTexture tex, solid_tex;
 #ifndef UAPLAY_PS5_SOFTWARE
@@ -823,10 +824,10 @@ typedef struct {
     TTF_Font *font_label,*font_card,*font_brand,*font_clock;
     int web_font_faces;
 #endif
-    TTF_Font *scripts[7];
-    TTF_Font *scripts_small[7];
-    TTF_Font *scripts_big[7];
-    TTF_Font *scripts_tiny[7];
+    TTF_Font *scripts[UI_SCRIPT_COUNT];
+    TTF_Font *scripts_small[UI_SCRIPT_COUNT];
+    TTF_Font *scripts_big[UI_SCRIPT_COUNT];
+    TTF_Font *scripts_tiny[UI_SCRIPT_COUNT];
 } Paint;
 #ifdef __PS5__
 static Paint *keyboard_paint;
@@ -834,7 +835,7 @@ static SDL_Window *keyboard_window;
 static void present_ui(SDL_Window *window);
 #endif
 static const char *script_fonts[]={"Tamil","Telugu","Devanagari","Malayalam",
-                                  "Bengali","Arabic","Thai"};
+                                  "Bengali","Arabic","Thai","JP"};
 static TTF_Font *choose_font(Paint *p,const char *s){
     const unsigned char *u=(const unsigned char*)s;
     while(*u){
@@ -842,14 +843,20 @@ static TTF_Font *choose_font(Paint *p,const char *s){
         if(cp>=0xC0 && cp<0xE0 && *u){cp=((cp&31)<<6)|(*u++&63);}
         else if(cp>=0xE0 && cp<0xF0 && u[0] && u[1]){
             cp=((cp&15)<<12)|((u[0]&63)<<6)|(u[1]&63);u+=2;
-        }else if(cp>=0xF0 && cp<0xF8 && u[0] && u[1] && u[2])u+=3;
+        }else if(cp>=0xF0 && cp<0xF8 && u[0] && u[1] && u[2]){
+            cp=((cp&7)<<18)|((u[0]&63)<<12)|((u[1]&63)<<6)|(u[2]&63);u+=3;
+        }
         int idx=cp>=0x0B80 && cp<=0x0BFF?0:
                 cp>=0x0C00 && cp<=0x0C7F?1:
                 cp>=0x0900 && cp<=0x097F?2:
                 cp>=0x0D00 && cp<=0x0D7F?3:
                 cp>=0x0980 && cp<=0x09FF?4:
                 cp>=0x0600 && cp<=0x06FF?5:
-                cp>=0x0E00 && cp<=0x0E7F?6:-1;
+                cp>=0x0E00 && cp<=0x0E7F?6:
+                ((cp>=0x3000&&cp<=0x30FF)||(cp>=0x31F0&&cp<=0x31FF)||
+                 (cp>=0x3400&&cp<=0x4DBF)||(cp>=0x4E00&&cp<=0x9FFF)||
+                 (cp>=0xF900&&cp<=0xFAFF)||(cp>=0xFF66&&cp<=0xFF9F)||
+                 (cp>=0x20000&&cp<=0x323AF))?UI_SCRIPT_JAPANESE:-1;
         if(idx>=0){
             TTF_Font *fallback=
 #ifdef UAPLAY_PS5_SOFTWARE
@@ -1142,7 +1149,7 @@ static int paint_init(Paint *p) {
     p->font_small=TTF_OpenFont(UAPLAY_ASSET("InterVariable.ttf"),19);
     p->font_tiny=TTF_OpenFont(UAPLAY_ASSET("InterVariable.ttf"),15);
 #endif
-    for(int i=0;i<7;i++){
+    for(int i=0;i<UI_SCRIPT_COUNT;i++){
         char path[96];
         snprintf(path,sizeof(path),UAPLAY_ASSET("NotoSans%s.ttf"),script_fonts[i]);
         #ifdef UAPLAY_PS5_SOFTWARE
@@ -1162,7 +1169,7 @@ static int paint_init(Paint *p) {
         p->font_label,p->font_card,p->font_brand,p->font_clock};
     for(unsigned j=0;j<sizeof(main_fonts)/sizeof(main_fonts[0]);j++)
         if(main_fonts[j])TTF_SetFontHinting(main_fonts[j],TTF_HINTING_LIGHT);
-    for(int j=0;j<7;j++){
+    for(int j=0;j<UI_SCRIPT_COUNT;j++){
         TTF_Font *fallback[]={p->scripts[j],p->scripts_big[j],p->scripts_small[j],p->scripts_tiny[j]};
         for(unsigned k=0;k<sizeof(fallback)/sizeof(fallback[0]);k++)
             if(fallback[k])TTF_SetFontHinting(fallback[k],TTF_HINTING_LIGHT);
@@ -5443,7 +5450,7 @@ cleanup_paint:
     ui_ambient_destroy();
 #endif
     text_cache_destroy();
-    for(int i=0;i<7;i++){
+    for(int i=0;i<UI_SCRIPT_COUNT;i++){
         if(paint.scripts[i])TTF_CloseFont(paint.scripts[i]);
         if(paint.scripts_small[i])TTF_CloseFont(paint.scripts_small[i]);
         if(paint.scripts_big[i])TTF_CloseFont(paint.scripts_big[i]);

@@ -173,6 +173,18 @@ static int preview_smoke(Paint *paint){
     }
     fprintf(stderr,"[preview] bundled web typography: %s\n",paint->web_font_faces?"PASS":"FAIL");
     ok &= paint->web_font_faces;
+    TTF_Font *jp=choose_font(paint,"NHK 日本語 ひらがな カタカナ");
+    int jp_ok=jp&&jp==paint->scripts[UI_SCRIPT_JAPANESE];
+    if(jp_ok){
+        const Uint16 sample[]={0x65e5,0x672c,0x8a9e,0x3072,0x3089,0x30ab,0x30bf,'N'};
+        for(unsigned i=0;i<sizeof(sample)/sizeof(sample[0]);i++)
+            jp_ok &= TTF_GlyphIsProvided(jp,sample[i])!=0;
+        SDL_Surface *rendered=TTF_RenderUTF8_Blended(jp,"NHK 日本語 ひらがな カタカナ",(SDL_Color){255,255,255,255});
+        jp_ok &= rendered!=NULL;
+        if(rendered)SDL_FreeSurface(rendered);
+    }
+    fprintf(stderr,"[preview] Japanese fallback kana and kanji: %s\n",jp_ok?"PASS":"FAIL");
+    ok &= jp_ok;
     int raster_w=0,raster_h=0;
     int logical_w=0,logical_h=0;
     SDL_RenderGetLogicalSize(ui_renderer,&logical_w,&logical_h);
