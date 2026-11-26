@@ -1948,12 +1948,17 @@ static void footer(Paint *p,const char *message) {
 }
 static void poster(Paint *p,const Movie *movie,int x,int y,int width,int height,int *budget) {
     UiTexture image=poster_texture(movie,budget);
-    if(!image) {
-        box(p,x,y,width,height,.15f,.19f,.23f);
 #ifdef UAPLAY_PS5_SOFTWARE
+    SDL_Rect poster_rect={x,y,width,height};
+    if(ui_is_focused(poster_rect))ui_focus.pending_radius=12.f;
+#endif
+    if(!image) {
+#ifdef UAPLAY_PS5_SOFTWARE
+        ui_card_depth(poster_rect,12,ui_rgb(ui_light_theme?0xdce4ec:0x26333e,255));
         ui_icon(movie->series?I_TV:I_FILM,x+width*.5f,y+height*.5f-10,34,ui_muted());
         ui_center_color(p,"UAPlay",x+4,y+height/2+9,width-8,25,p->font_tiny,ui_muted());
 #else
+        box(p,x,y,width,height,.15f,.19f,.23f);
         text(p,"UAPLAY",x+12,y+height/2-15,width-25);
 #endif
         return;
@@ -1963,7 +1968,9 @@ static void poster(Paint *p,const Movie *movie,int x,int y,int width,int height,
 #ifdef UAPLAY_PS5_SOFTWARE
     SDL_SetTextureColorMod((SDL_Texture*)(uintptr_t)image,255,255,255);
     SDL_SetTextureAlphaMod((SDL_Texture*)(uintptr_t)image,255);
-    rounded_box((SDL_Rect){x,y,width,height},12,ui_rgb(0xffffff,255),(SDL_Texture*)(uintptr_t)image);
+    ui_card_shadow(poster_rect,12);
+    rounded_box(poster_rect,12,ui_rgb(0xffffff,255),(SDL_Texture*)(uintptr_t)image);
+    ui_card_edge(poster_rect,12);
 #else
     box(p,x,y,width,height,1,1,1);
 #endif
@@ -2208,13 +2215,13 @@ static void draw_content(Paint *p,Page page,Movie *movies,int n,int chosen,
                 const int local=i-page_start;
                 SDL_Rect tile=tv_card_rect(local);
                 int x=tile.x,y=tile.y;
-                #ifdef UAPLAY_PS5_SOFTWARE
-                ui_button_depth(tile,16,ui_rgb(ui_light_theme?0xdce4ec:0x303841,255),0);
+                if(i==ps5_tv_selection && !ps5_tv_filter_focus)
+                    selection_frame(p,x,y,tile.w,tile.h);
+#ifdef UAPLAY_PS5_SOFTWARE
+                ui_card_depth(tile,16,ui_rgb(ui_light_theme?0xdce4ec:0x303841,255));
 #else
                 box_alpha(p,x,y,184,184,.19f,.22f,.26f,1.f,16);
 #endif
-                if(i==ps5_tv_selection && !ps5_tv_filter_focus)
-                    selection_frame(p,x,y,tile.w,tile.h);
                 int image_w=0,image_h=0;
                 UiTexture logo=logo_texture(channel->logo,&logo_budget,&image_w,&image_h);
                 if(logo && image_w>0 && image_h>0){
@@ -2442,7 +2449,13 @@ static void draw_content(Paint *p,Page page,Movie *movies,int n,int chosen,
             if(!item)continue;
             int local=i-first;
             int x=32+(local%3)*417,y=163+(local/3)*228;
+#ifdef UAPLAY_PS5_SOFTWARE
+            if(i==ps5_wallpaper_selected && !ps5_wallpaper_focus)
+                selection_frame(p,x,y,382,214);
+            ui_card_depth((SDL_Rect){x,y,382,214},14,ui_rgb(ui_light_theme?0xdce4ec:0x26333e,255));
+#else
             box_alpha(p,x,y,382,214,.13f,.16f,.19f,1.f,14);
+#endif
             int tw=0,th=0;
             UiTexture thumbnail=logo_texture(item->thumbnail,&image_budget,&tw,&th);
             if(thumbnail && tw>0 && th>0){
@@ -2458,8 +2471,10 @@ static void draw_content(Paint *p,Page page,Movie *movies,int n,int chosen,
                                &source,&dest);
             }else text_center_button(p,"UAPlay",x+8,y+75,366,38,
                                      p->font_small,.7f,.74f,.79f);
+#ifndef UAPLAY_PS5_SOFTWARE
             if(i==ps5_wallpaper_selected && !ps5_wallpaper_focus)
                 selection_frame(p,x,y,382,214);
+#endif
             text_font(p,item->name,x+14,y+185,354,p->font_small,1.f,1.f,1.f);
             press_preview(p,x,y,382,214,14);
         }

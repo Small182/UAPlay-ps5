@@ -221,7 +221,22 @@ static void ui_focus_finish(void){
  rounded_outline_f(glow,radius+2,2,halo);rounded_outline_f(r,radius,2,color);
 }
 static int ui_focus_moving(void){Uint32 now=SDL_GetTicks();return ui_focus.valid&&(now-ui_focus.changed<175||(ui_press_at&&now-ui_press_at<145));}
+/* Cards sit closer to the background than buttons. Shadows are short,
+   low-opacity and independent of focus, without changing hit geometry. */
+static void ui_card_shadow(SDL_Rect rect,int radius){
+    int light=ui_theme_enabled&&ui_light_theme;
+    SDL_Rect soft={rect.x-2,rect.y+1,rect.w+4,rect.h+4};
+    rounded_box(soft,radius+2,ui_rgb(0x000000,light?10:22),NULL);
+    SDL_Rect contact={rect.x,rect.y+2,rect.w,rect.h+1};
+    rounded_box(contact,radius,ui_rgb(0x000000,light?9:17),NULL);
+}
+static void ui_card_edge(SDL_Rect rect,int radius){
+    int light=ui_theme_enabled&&ui_light_theme;
+    rounded_outline(rect,radius,1,ui_rgb(light?0x536476:0xd2e4f7,light?34:22));
+}
 static void ui_panel(Paint *p,int x,int y,int w,int h,int radius){
+ SDL_Rect rect={x,y,w,h};
+ ui_card_shadow(rect,radius);
  /* Soft vertical tonal gradient in one rounded mesh, no banding.
     Distinct bright/dark palettes keep text and poster artwork intact. */
  SDL_Color top=ui_rgb(ui_light_theme?0xf8fafc:0x202a34,ui_wallpaper_active?215:255);
@@ -240,7 +255,9 @@ static void ui_panel(Paint *p,int x,int y,int w,int h,int radius){
   }
  }
  SDL_RenderGeometry(ui_renderer,NULL,v,N+1,idx,N*3);
- rounded_outline((SDL_Rect){x,y,w,h},radius,1,ui_rgb(ui_light_theme?0xd1d9e1:0x526272,90));
+ rounded_outline(rect,radius,1,ui_rgb(ui_light_theme?0xd1d9e1:0x526272,90));
+ SDL_Rect inside={x+1,y+1,w-2,h-2};
+ rounded_outline(inside,radius-1,1,ui_rgb(0xffffff,ui_light_theme?44:12));
  (void)p;
 }
 
@@ -327,6 +344,14 @@ static void ui_gradient_round(SDL_Rect rect,float radius,SDL_Color top,SDL_Color
     SDL_RenderGeometry(ui_renderer,NULL,v,1+2*UI_PERIM,ix,9*UI_PERIM);
 }
 static int ui_is_focused(SDL_Rect r){return ui_focus.seen&&SDL_RectEquals(&r,&ui_focus.pending);}
+static void ui_card_depth(SDL_Rect rect,int radius,SDL_Color base){
+    if(ui_is_focused(rect))ui_focus.pending_radius=(float)radius;
+    ui_card_shadow(rect,radius);
+    SDL_Color top=ui_mix(base,ui_rgb(0xffffff,base.a),ui_light_theme?.085f:.055f);
+    SDL_Color bottom=ui_mix(base,ui_rgb(0x000000,base.a),ui_light_theme?.035f:.075f);
+    ui_gradient_round(rect,radius,top,bottom);
+    ui_card_edge(rect,radius);
+}
 static int ui_button_depth(SDL_Rect rect,int radius,SDL_Color base,int focused){
     if(ui_is_focused(rect))ui_focus.pending_radius=(float)radius;
     int light=ui_theme_enabled&&ui_light_theme;
