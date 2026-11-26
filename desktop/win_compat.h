@@ -7,6 +7,11 @@
 #include <malloc.h>
 #include <string.h>
 #include <io.h>
+#include <unistd.h>
+/* Include declarations before overriding mkdir's POSIX call signature. */
+#ifdef mkdir
+#undef mkdir
+#endif
 #define mkdir(path,mode) _mkdir(path)
 /* Portable reentrant tokenization, including consecutive delimiters. */
 static inline char *preview_strtok_r(char *str,const char *delim,char **next){

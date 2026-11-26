@@ -29,9 +29,15 @@ if [[ ! -f "$vlc_include/vlc/vlc.h" ]]; then
     # Official end-user ZIPs need not contain the SDK. Obtain the identical
     # release's public API headers, not an unrelated VLC major version.
     echo "VLC ZIP has no SDK headers; fetching VideoLAN VLC $version headers"
-    git clone --quiet --depth 1 --filter=blob:none --sparse --branch "$version" https://github.com/videolan/vlc.git "$work/vlc-source"
-    git -C "$work/vlc-source" sparse-checkout set include/vlc
-    vlc_include="$work/vlc-source/include"
+    source_archive="vlc-$version.tar.xz"
+    source_url="https://download.videolan.org/pub/videolan/vlc/$version/$source_archive"
+    curl -fL --retry 3 "$source_url" -o "$work/$source_archive"
+    curl -fL --retry 3 "$source_url.sha256" -o "$work/source-checksum"
+    expected_source="$(awk '{print $1;exit}' "$work/source-checksum")"
+    [[ "$expected_source" =~ ^[a-fA-F0-9]{64}$ ]]
+    (cd "$work" && printf '%s  %s\n' "$expected_source" "$source_archive" | sha256sum -c -)
+    tar -xJf "$work/$source_archive" -C "$work" "vlc-$version/include/vlc"
+    vlc_include="$work/vlc-$version/include"
 fi
 [[ -f "$vlc_include/vlc/vlc.h" ]] || { echo "VLC API headers missing: $vlc_include" >&2; exit 1; }
 echo "VLC headers: $vlc_include"
@@ -54,6 +60,7 @@ gcc -std=gnu11 -O2 -g -Wall -Wextra -D__PS5__ -DUAPLAY_PS5_SOFTWARE \
     -include desktop/win_compat.h -Isource -I"$vlc_include" "${cflags[@]}" \
     "${sources[@]}" ps5/libvlc_mpv.c desktop/host_platform.c desktop/virtual_pad.c \
     -o "$out/UAPlay.exe" "${libs[@]}" "$vlc/libvlc.dll" -lm -pthread
+echo "Compile and link succeeded; collecting portable runtime"
 cp -a romfs "$out/"
 ca=""
 for p in /ucrt64/etc/ssl/certs/ca-bundle.crt /ucrt64/etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-bundle.crt /etc/ssl/certs/ca-certificates.crt; do
@@ -73,6 +80,23 @@ while :; do
             cp "$path" "$out/$name"
             added=1
         fi
+    done < <(find "$out" -type f \( -iname '*.dll' -o -iname '*.exe' \) -print0 | xargs -0 objdump -p 2>/dev/null | awk '/DLL Name:/{print $3}' | sort -fu)
+    [[ "$added" == 1 ]] || break
+done
+# SDL_image may dynamically load optional codecs without PE imports.
+# Include the installed codec DLLs and their runtime dependencies via a second
+# import pass. The package manager installs these as SDL_image dependencies.
+for pattern in 'libjpeg-*.dll' 'libpng*.dll' 'libwebp*.dll' 'libtiff-*.dll' 'libavif*.dll' 'libjxl*.dll'; do
+    while IFS= read -r -d '' dll; do
+        [[ -f "$out/${dll##*/}" ]] || cp "$dll" "$out/"
+    done < <(find /ucrt64/bin -maxdepth 1 -iname "$pattern" -print0)
+done
+while :; do
+    added=0
+    while IFS= read -r name; do
+        [[ -n "$name" && ! -f "$out/$name" ]] || continue
+        path="$(find /ucrt64/bin -maxdepth 1 -iname "$name" -print -quit)"
+        if [[ -n "$path" ]]; then cp "$path" "$out/$name"; added=1; fi
     done < <(find "$out" -type f \( -iname '*.dll' -o -iname '*.exe' \) -print0 | xargs -0 objdump -p 2>/dev/null | awk '/DLL Name:/{print $3}' | sort -fu)
     [[ "$added" == 1 ]] || break
 done

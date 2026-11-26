@@ -28,7 +28,7 @@ jobs:
           msystem: UCRT64
           update: true
           install: >-
-            curl unzip
+            curl unzip tar xz
             mingw-w64-ucrt-x86_64-gcc
             mingw-w64-ucrt-x86_64-binutils
             mingw-w64-ucrt-x86_64-pkgconf
