@@ -17,8 +17,20 @@ SDL_Window *ps5_open_display(SDL_Renderer **renderer){
     ps5_boot_trace("Initializing SDL video",NULL);
     if(SDL_Init(SDL_INIT_VIDEO)<0){ps5_boot_trace("SDL video failed",SDL_GetError());return NULL;}
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY,"1");
+    /* Native 1080p raster in CI. Interactive preview fits the monitor
+       without requiring fullscreen or changing the user's desktop mode. */
+    int width=1920,height=1080;
+    if(!getenv("UAPLAY_PREVIEW_SMOKE")){
+        SDL_Rect usable;
+        if(SDL_GetDisplayUsableBounds(0,&usable)==0){
+            float scale=1.0f;
+            if(usable.w-24<width)scale=(usable.w-24)/(float)width;
+            if((usable.h-64)/(float)height<scale)scale=(usable.h-64)/(float)height;
+            if(scale<1.f && scale>.25f){width=(int)(1920*scale);height=width*9/16;}
+        }
+    }
     SDL_Window *w=SDL_CreateWindow("UAPlay PS5 Desktop Preview",SDL_WINDOWPOS_CENTERED,
-        SDL_WINDOWPOS_CENTERED,1280,720,SDL_WINDOW_SHOWN|SDL_WINDOW_RESIZABLE);
+        SDL_WINDOWPOS_CENTERED,width,height,SDL_WINDOW_SHOWN|SDL_WINDOW_RESIZABLE|SDL_WINDOW_ALLOW_HIGHDPI);
     if(!w){ps5_boot_trace("Window creation failed",SDL_GetError());return NULL;}
     *renderer=SDL_CreateRenderer(w,-1,SDL_RENDERER_SOFTWARE);
     if(!*renderer || SDL_RenderSetLogicalSize(*renderer,1280,720)<0 ||
@@ -26,6 +38,12 @@ SDL_Window *ps5_open_display(SDL_Renderer **renderer){
         ps5_boot_trace("Renderer creation failed",SDL_GetError());
         if(*renderer)SDL_DestroyRenderer(*renderer);
         SDL_DestroyWindow(w);return NULL;
+    }
+    SDL_SetWindowMinimumSize(w,640,360);
+    int rw=0,rh=0;
+    if(SDL_GetRendererOutputSize(*renderer,&rw,&rh)==0){
+        char size[100];snprintf(size,sizeof(size),"framebuffer %dx%d; logical 1280x720",rw,rh);
+        ps5_boot_trace("UI raster resolution",size);
     }
     return w;
 }

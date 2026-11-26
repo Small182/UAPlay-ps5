@@ -871,56 +871,68 @@ static Uint8 color_byte(float value){
 }
 
 #ifdef UAPLAY_PS5_SOFTWARE
-/* The software renderer uses the same rounded silhouettes as the UI shader. */
+/* Direct native-framebuffer rendering. Subpixel geometry and a one-physical-
+   pixel alpha fringe smooth edges without a full-screen supersample buffer. */
+static float ui_pixel(void){
+    float sx=1.f,sy=1.f;SDL_RenderGetScale(ui_renderer,&sx,&sy);
+    return 1.f/fmaxf(1.f,fmaxf(sx,sy));
+}
+enum { UI_ARC_SEG=20, UI_PERIM=4*(UI_ARC_SEG+1) };
+static SDL_FPoint ui_round_point(SDL_FRect r,float rad,int k,float offset){
+    int corner=k/(UI_ARC_SEG+1),j=k%(UI_ARC_SEG+1);
+    float a=(corner*UI_ARC_SEG+j)*1.57079632679f/UI_ARC_SEG;
+    float cx=r.x+(corner==0||corner==3?r.w-rad:rad);
+    float cy=r.y+(corner<2?r.h-rad:rad);
+    return (SDL_FPoint){cx+(rad+offset)*cosf(a),cy+(rad+offset)*sinf(a)};
+}
 static void rounded_box(SDL_Rect rect,int radius,SDL_Color color,SDL_Texture *texture){
-    enum { segments=12, perimeter=4*(segments+1) };
-    static const float step=1.57079632679f/segments;
-    SDL_Vertex vertices[perimeter+1];
-    int indices[perimeter*3];
-    vertices[0]=(SDL_Vertex){{rect.x+rect.w*.5f,rect.y+rect.h*.5f},color,{.5f,.5f}};
-    for(int corner=0;corner<4;corner++){
-        float cx=rect.x+(corner==0 || corner==3?rect.w-radius:radius);
-        float cy=rect.y+(corner<2?rect.h-radius:radius);
-        for(int point=0;point<=segments;point++){
-            int index=corner*(segments+1)+point;
-            float angle=(corner*segments+point)*step;
-            SDL_FPoint position={cx+radius*cosf(angle),cy+radius*sinf(angle)};
-            vertices[index+1]=(SDL_Vertex){position,color,
-                {(position.x-rect.x)/rect.w,(position.y-rect.y)/rect.h}};
-            indices[index*3]=0;
-            indices[index*3+1]=index+1;
-            indices[index*3+2]=(index+1)%perimeter+1;
+    if(rect.w<=0||rect.h<=0)return;
+    SDL_FRect r={rect.x,rect.y,rect.w,rect.h};
+    float rad=fminf(radius,fminf(r.w,r.h)*.5f);
+    float feather=fminf(ui_pixel(),rad*.5f);
+    SDL_Vertex v[1+2*UI_PERIM];int ix[9*UI_PERIM];
+    v[0]=(SDL_Vertex){{r.x+r.w*.5f,r.y+r.h*.5f},color,{.5f,.5f}};
+    SDL_Color clear=color;clear.a=0;
+    for(int k=0;k<UI_PERIM;k++){
+        SDL_FPoint q=ui_round_point(r,rad,k,-feather*.5f);
+        SDL_FPoint z=ui_round_point(r,rad,k,feather*.5f);
+        float u=fmaxf(0,fminf(1,(q.x-r.x)/r.w)),w=fmaxf(0,fminf(1,(q.y-r.y)/r.h));
+        float U=fmaxf(0,fminf(1,(z.x-r.x)/r.w)),W=fmaxf(0,fminf(1,(z.y-r.y)/r.h));
+        int a=1+2*k,b=1+2*((k+1)%UI_PERIM);
+        v[a]=(SDL_Vertex){q,color,{u,w}};v[a+1]=(SDL_Vertex){z,clear,{U,W}};
+        int j=9*k;ix[j]=0;ix[j+1]=a;ix[j+2]=b;
+        ix[j+3]=a;ix[j+4]=a+1;ix[j+5]=b;ix[j+6]=b;ix[j+7]=a+1;ix[j+8]=b+1;
+    }
+    SDL_RenderGeometry(ui_renderer,texture,v,1+2*UI_PERIM,ix,9*UI_PERIM);
+}
+static void rounded_outline_f(SDL_FRect r,float radius,float thickness,SDL_Color color){
+    if(r.w<=2||r.h<=2)return;
+    float rad=fminf(radius,fminf(r.w,r.h)*.5f);
+    thickness=fminf(fmaxf(thickness,1.f),rad-.05f);
+    if(thickness<=0)return;
+    float aa=fminf(ui_pixel(),thickness*.8f);
+    const float offsets[]={aa*.5f,-aa*.5f,-thickness+aa*.5f,-thickness-aa*.5f};
+    SDL_Vertex v[4*UI_PERIM];int ix[18*UI_PERIM];
+    SDL_Color clear=color;clear.a=0;
+    for(int k=0;k<UI_PERIM;k++){
+        int n=(k+1)%UI_PERIM;
+        for(int layer=0;layer<4;layer++){
+            float offset=fmaxf(-rad+.01f,offsets[layer]);
+            SDL_FPoint q=ui_round_point(r,rad,k,offset);
+            v[4*k+layer]=(SDL_Vertex){q,layer==0||layer==3?clear:color,{0,0}};
+        }
+        for(int layer=0;layer<3;layer++){
+            int a=4*k+layer,b=4*n+layer,j=18*k+layer*6;
+            ix[j]=a;ix[j+1]=a+1;ix[j+2]=b;
+            ix[j+3]=b;ix[j+4]=a+1;ix[j+5]=b+1;
         }
     }
-    SDL_RenderGeometry(ui_renderer,texture,vertices,perimeter+1,indices,perimeter*3);
+    SDL_RenderGeometry(ui_renderer,NULL,v,4*UI_PERIM,ix,18*UI_PERIM);
 }
-/* Draw an actual rounded annulus, not an SDL_RenderDrawRect.
-   Shader-based Switch selection borders have rounded corners. */
 static void rounded_outline(SDL_Rect rect,int radius,int thickness,SDL_Color color){
-    enum { segments=12, perimeter=4*(segments+1) };
-    const float step=1.57079632679f/segments;
-    SDL_Vertex vertices[2*perimeter];
-    int indices[6*perimeter];
-    if(radius<1)radius=1;
-    if(thickness<1)thickness=1;
-    if(thickness>=radius)thickness=radius>1?radius-1:1;
-    for(int corner=0;corner<4;corner++){
-        float cx=rect.x+(corner==0 || corner==3?rect.w-radius:radius);
-        float cy=rect.y+(corner<2?rect.h-radius:radius);
-        for(int point=0;point<=segments;point++){
-            int k=corner*(segments+1)+point;
-            float angle=(corner*segments+point)*step;
-            float cs=cosf(angle),sn=sinf(angle);
-            vertices[2*k]=(SDL_Vertex){{cx+radius*cs,cy+radius*sn},color,{0.f,0.f}};
-            vertices[2*k+1]=(SDL_Vertex){{cx+(radius-thickness)*cs,
-                                          cy+(radius-thickness)*sn},color,{0.f,0.f}};
-            int next=(k+1)%perimeter;
-            indices[6*k]=2*k;indices[6*k+1]=2*k+1;indices[6*k+2]=2*next;
-            indices[6*k+3]=2*next;indices[6*k+4]=2*k+1;indices[6*k+5]=2*next+1;
-        }
-    }
-    SDL_RenderGeometry(ui_renderer,NULL,vertices,2*perimeter,indices,6*perimeter);
+    rounded_outline_f((SDL_FRect){rect.x,rect.y,rect.w,rect.h},radius,thickness,color);
 }
+
 #endif
 
 static void renderer_box(const Paint *p,SDL_Rect rect,float r,float g,float b,float a,int radius){
@@ -1043,6 +1055,14 @@ static int paint_init(Paint *p) {
     }
 #ifdef UAPLAY_PS5_SOFTWARE
     if(p->font_big)TTF_SetFontStyle(p->font_big,TTF_STYLE_BOLD);
+    TTF_Font *main_fonts[]={p->font,p->font_big,p->font_small,p->font_tiny};
+    for(unsigned j=0;j<sizeof(main_fonts)/sizeof(main_fonts[0]);j++)
+        if(main_fonts[j])TTF_SetFontHinting(main_fonts[j],TTF_HINTING_LIGHT);
+    for(int j=0;j<7;j++){
+        TTF_Font *fallback[]={p->scripts[j],p->scripts_big[j],p->scripts_small[j],p->scripts_tiny[j]};
+        for(unsigned k=0;k<sizeof(fallback)/sizeof(fallback[0]);k++)
+            if(fallback[k])TTF_SetFontHinting(fallback[k],TTF_HINTING_LIGHT);
+    }
 #endif
     if(!p->font || !p->font_big || !p->font_small || !p->font_tiny){
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"Required font %s: %s",
@@ -1243,9 +1263,19 @@ static void text_color(Paint *p,const char *str,int x,int y,int limit,
         draw_width=(width*2+1)/3;
         draw_height=(height*2+1)/3;
 #endif
-        SDL_Rect clip={x,y,limit,draw_height};
+        SDL_Rect clip={x,y,limit,draw_height+1};
         if(limit>0)SDL_RenderSetClipRect(ui_renderer,&clip);
+#ifdef UAPLAY_PS5_SOFTWARE
+        /* Glyphs already rasterize at 1.5x logical size. Avoid rounding
+           their destination back down to integer 720p coordinates. */
+        SDL_Texture *glyph=(SDL_Texture*)(uintptr_t)texture;
+        SDL_SetTextureColorMod(glyph,color_byte(r),color_byte(g),color_byte(b));
+        SDL_SetTextureAlphaMod(glyph,255);
+        SDL_FRect dst={x,y,width/1.5f,height/1.5f};
+        SDL_RenderCopyF(ui_renderer,glyph,NULL,&dst);
+#else
         box_alpha(p,x,y,draw_width,draw_height,r,g,b,1.f,0);
+#endif
         if(limit>0)SDL_RenderSetClipRect(ui_renderer,NULL);
         p->tex=previous;
         ui_texture_destroy(transient_texture);
@@ -4988,6 +5018,9 @@ int main(void) {
     curl_global_cleanup();
 #endif
 cleanup_paint:
+#ifdef UAPLAY_PS5_SOFTWARE
+    ui_icon_cache_destroy();
+#endif
     text_cache_destroy();
     for(int i=0;i<7;i++){
         if(paint.scripts[i])TTF_CloseFont(paint.scripts[i]);

@@ -235,7 +235,12 @@ void posters_init(void){
 UiTexture ui_texture_create(SDL_Surface *surface){
     if(!surface || !ui_renderer)return 0;
     SDL_Texture *texture=SDL_CreateTextureFromSurface(ui_renderer,surface);
-    if(texture)SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);
+    if(texture){
+        SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);
+#if SDL_VERSION_ATLEAST(2,0,12)
+        SDL_SetTextureScaleMode(texture,SDL_ScaleModeLinear);
+#endif
+    }
     return (UiTexture)(uintptr_t)texture;
 }
 void ui_texture_destroy(UiTexture texture){

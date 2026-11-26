@@ -41,7 +41,68 @@ static void im_fill(IconMesh *m,const float *p,int n){
  int j=m->nv;for(int i=0;i<n;i++)im_point(m,m->x+p[i*2]*m->k,m->y+p[i*2+1]*m->k);
  for(int i=1;i<n-1;i++)im_tri(m,j,j+i,j+i+1);
 }
+/* Supersampled coverage atlas, generated lazily from the same vector
+   paths. A 3x logical mask with four samples per texel keeps fine icons
+   smooth at 1080p and higher, without rasterizing icons each frame. */
+typedef struct {UiIcon icon;int size;SDL_Texture *tex;Uint32 stamp;} UiIconRaster;
+static UiIconRaster ui_icon_cache[96];
+static Uint32 ui_icon_clock;
+static SDL_Texture *ui_icon_raster(const IconMesh *m,int sz){
+    int w=sz*3+12,h=w;size_t bytes=(size_t)w*h;
+    Uint8 *coverage=calloc(bytes,1);
+    if(!coverage)return NULL;
+    for(int j=0;j<m->ni;j+=3){
+        SDL_FPoint a=m->v[m->ix[j]].position,b=m->v[m->ix[j+1]].position,c=m->v[m->ix[j+2]].position;
+        a.x=(a.x-m->x)*3+6;a.y=(a.y-m->y)*3+6;
+        b.x=(b.x-m->x)*3+6;b.y=(b.y-m->y)*3+6;
+        c.x=(c.x-m->x)*3+6;c.y=(c.y-m->y)*3+6;
+        float area=(b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x);
+        if(fabsf(area)<.001f)continue;
+        int x0=(int)fmaxf(0,floorf(fminf(a.x,fminf(b.x,c.x))));
+        int y0=(int)fmaxf(0,floorf(fminf(a.y,fminf(b.y,c.y))));
+        int x1=(int)fminf(w-1,ceilf(fmaxf(a.x,fmaxf(b.x,c.x))));
+        int y1=(int)fminf(h-1,ceilf(fmaxf(a.y,fmaxf(b.y,c.y))));
+        for(int y=y0;y<=y1;y++)for(int x=x0;x<=x1;x++){
+            Uint8 *mask=&coverage[y*w+x];if(*mask==15)continue;
+            for(int k=0;k<4;k++){
+                if(*mask&(1<<k))continue;
+                float px=x+(k&1?.75f:.25f),py=y+(k&2?.75f:.25f);
+                float u=(b.x-a.x)*(py-a.y)-(b.y-a.y)*(px-a.x);
+                float v=(c.x-b.x)*(py-b.y)-(c.y-b.y)*(px-b.x);
+                float z=(a.x-c.x)*(py-c.y)-(a.y-c.y)*(px-c.x);
+                if(area>0?(u>=0&&v>=0&&z>=0):(u<=0&&v<=0&&z<=0))*mask|=(1<<k);
+            }
+        }
+    }
+    SDL_Surface *surface=SDL_CreateRGBSurfaceWithFormat(0,w,h,32,SDL_PIXELFORMAT_RGBA32);
+    if(!surface){free(coverage);return NULL;}
+    static const Uint8 alpha[16]={0,64,64,128,64,128,128,191,64,128,128,191,128,191,191,255};
+    for(int y=0;y<h;y++){
+        Uint8 *row=(Uint8*)surface->pixels+y*surface->pitch;
+        for(int x=0;x<w;x++){row[4*x]=row[4*x+1]=row[4*x+2]=255;row[4*x+3]=alpha[coverage[y*w+x]];}
+    }
+    free(coverage);
+    SDL_Texture *tex=SDL_CreateTextureFromSurface(ui_renderer,surface);SDL_FreeSurface(surface);
+    if(tex){SDL_SetTextureBlendMode(tex,SDL_BLENDMODE_BLEND);SDL_SetTextureScaleMode(tex,SDL_ScaleModeLinear);}
+    return tex;
+}
+static void ui_icon_cache_destroy(void){
+    for(int j=0;j<96;j++)if(ui_icon_cache[j].tex){SDL_DestroyTexture(ui_icon_cache[j].tex);ui_icon_cache[j].tex=NULL;}
+}
 static void ui_icon(UiIcon icon,float cx,float cy,float size,SDL_Color c){
+    int sz=(int)roundf(size);
+    if(sz<=0||sz>96||icon==I_NONE)return;
+    size=(float)sz;SDL_FRect dst={cx-size*.5f-2,cy-size*.5f-2,size+4,size+4};
+    int slot=0;
+    for(int j=0;j<96;j++){
+        UiIconRaster *e=&ui_icon_cache[j];
+        if(e->tex&&e->icon==icon&&e->size==sz){
+            e->stamp=++ui_icon_clock;
+            SDL_SetTextureColorMod(e->tex,c.r,c.g,c.b);SDL_SetTextureAlphaMod(e->tex,c.a);
+            SDL_RenderCopyF(ui_renderer,e->tex,NULL,&dst);return;
+        }
+        if(!e->tex|| (ui_icon_cache[slot].tex&&e->stamp<ui_icon_cache[slot].stamp))slot=j;
+    }
  IconMesh m;m.nv=m.ni=0;m.x=cx-size*.5f;m.y=cy-size*.5f;m.k=size/24.f;m.s=fmaxf(1.2f,size*1.8f/24.f);m.c=c;
 #define P(...) do{const float q[]={__VA_ARGS__};im_path(&m,q,sizeof(q)/sizeof(float)/2,0);}while(0)
 #define L(...) do{const float q[]={__VA_ARGS__};im_path(&m,q,sizeof(q)/sizeof(float)/2,1);}while(0)
@@ -85,7 +146,15 @@ static void ui_icon(UiIcon icon,float cx,float cy,float size,SDL_Color c){
 #undef L
 #undef F
 #undef C
- if(m.ni)SDL_RenderGeometry(ui_renderer,NULL,m.v,m.nv,m.ix,m.ni);
+ if(m.ni){
+    SDL_Texture *tex=ui_icon_raster(&m,sz);
+    if(tex){
+        UiIconRaster *e=&ui_icon_cache[slot];if(e->tex)SDL_DestroyTexture(e->tex);
+        *e=(UiIconRaster){icon,sz,tex,++ui_icon_clock};
+        SDL_SetTextureColorMod(tex,c.r,c.g,c.b);SDL_SetTextureAlphaMod(tex,c.a);
+        SDL_RenderCopyF(ui_renderer,tex,NULL,&dst);
+    }else SDL_RenderGeometry(ui_renderer,NULL,m.v,m.nv,m.ix,m.ni);
+ }
 }
 static void ui_center_color(Paint *p,const char *s,int x,int y,int w,int h,TTF_Font *font,SDL_Color c){
  int old=ui_theme_enabled;ui_theme_enabled=0;
@@ -126,17 +195,17 @@ static void ui_focus_set(SDL_Rect r){
 static void ui_focus_finish(void){
  if(!ui_focus.seen){ui_focus.valid=0;return;}
  Uint32 now=SDL_GetTicks();ui_focus_sample(now);SDL_FRect v=ui_focus.visual;
- float age=(float)(now-ui_press_at);int inset=ui_press_at&&age<145?(int)roundf(2.5f*sinf(3.14159265f*age/145.f)):0;
- SDL_Rect r={(int)roundf(v.x)-3+inset,(int)roundf(v.y)-3+inset,(int)roundf(v.w)+6-2*inset,(int)roundf(v.h)+6-2*inset};
+ float age=(float)(now-ui_press_at);float inset=ui_press_at&&age<145?2.5f*sinf(3.14159265f*age/145.f):0;
+ SDL_FRect r={v.x-3+inset,v.y-3+inset,v.w+6-2*inset,v.h+6-2*inset};
  if(r.w<10||r.h<10)return;
  float a,b,c;accent_real(ui_accent_index,&a,&b,&c);
  if(ui_theme_enabled&&ui_light_theme&&ui_accent_index==ACCENT_WHITE)a=b=c=.35f;
  SDL_Color color={color_byte(a),color_byte(b),color_byte(c),255};
- int radius=r.h>94?15:16;
- if(abs(r.w-r.h)<8 && r.h>=50)radius=r.h/2;
+ float radius=r.h>94?15:16;
+ if(fabsf(r.w-r.h)<8 && r.h>=50)radius=r.h*.5f;
  if(radius>r.w/2)radius=r.w/2;if(radius>r.h/2)radius=r.h/2;
- SDL_Rect glow={r.x-2,r.y-2,r.w+4,r.h+4};SDL_Color halo=color;halo.a=ui_theme_enabled&&ui_light_theme?25:46;
- rounded_outline(glow,radius+2,2,halo);rounded_outline(r,radius,2,color);
+ SDL_FRect glow={r.x-2,r.y-2,r.w+4,r.h+4};SDL_Color halo=color;halo.a=ui_theme_enabled&&ui_light_theme?25:46;
+ rounded_outline_f(glow,radius+2,2,halo);rounded_outline_f(r,radius,2,color);
 }
 static int ui_focus_moving(void){Uint32 now=SDL_GetTicks();return ui_focus.valid&&(now-ui_focus.changed<175||(ui_press_at&&now-ui_press_at<145));}
 static void ui_panel(Paint *p,int x,int y,int w,int h,int radius){
@@ -144,7 +213,7 @@ static void ui_panel(Paint *p,int x,int y,int w,int h,int radius){
     Distinct bright/dark palettes keep text and poster artwork intact. */
  SDL_Color top=ui_rgb(ui_light_theme?0xf8fafc:0x202a34,ui_wallpaper_active?215:255);
  SDL_Color bottom=ui_rgb(ui_light_theme?0xeef2f6:0x151b23,ui_wallpaper_active?205:255);
- enum {SEG=12,N=4*(SEG+1)};
+ enum {SEG=20,N=4*(SEG+1)};
  SDL_Vertex v[N+1];int idx[N*3];
  SDL_Color mid={(top.r+bottom.r)/2,(top.g+bottom.g)/2,(top.b+bottom.b)/2,(top.a+bottom.a)/2};
  v[0]=(SDL_Vertex){{x+w*.5f,y+h*.5f},mid,{0,0}};

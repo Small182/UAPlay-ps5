@@ -90,6 +90,9 @@ SDL_Window *ps5_open_display(SDL_Renderer **renderer){
             break;
         }
     }
+    /* SDL draws into the VideoOut framebuffer, not an intermediate 720p
+       texture. Keep the same logical layout and filter sampled textures. */
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY,"1");
     SDL_Window *window=SDL_CreateWindow("UAPlay",0,0,target.w,target.h,SDL_WINDOW_SHOWN);
     if(!window && (target.w!=mode.w || target.h!=mode.h)){
         ps5_boot_trace("1080p window unavailable; using desktop mode",SDL_GetError());
@@ -112,6 +115,13 @@ SDL_Window *ps5_open_display(SDL_Renderer **renderer){
         SDL_DestroyWindow(window);
         SDL_Quit();
         return NULL;
+    }
+    int output_w=0,output_h=0;
+    if(SDL_GetRendererOutputSize(display,&output_w,&output_h)==0){
+        snprintf(size_message,sizeof(size_message),"framebuffer %dx%d; logical 1280x720",output_w,output_h);
+        ps5_boot_trace("PS5 UI raster resolution",size_message);
+        if(output_w<1920 || output_h<1080)
+            ps5_boot_trace("1080p unavailable in current VideoOut mode; native-resolution fallback",NULL);
     }
     *renderer=display;
     return window;

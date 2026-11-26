@@ -85,6 +85,14 @@ static int preview_smoke(Paint *paint){
     snprintf(sources[0].title,sizeof(sources[0].title),"Тестове джерело 1");
     snprintf(sources[1].title,sizeof(sources[1].title),"Тестове джерело 2");
     int ok=preview_pad_selftest();
+    int raster_w=0,raster_h=0;
+    int logical_w=0,logical_h=0;
+    SDL_RenderGetLogicalSize(ui_renderer,&logical_w,&logical_h);
+    int hd=SDL_GetRendererOutputSize(ui_renderer,&raster_w,&raster_h)==0 &&
+           raster_w==1920 && raster_h==1080 && logical_w==1280 && logical_h==720;
+    fprintf(stderr,"[preview] native raster %dx%d, logical %dx%d: %s\n",
+            raster_w,raster_h,logical_w,logical_h,hd?"PASS":"FAIL");
+    ok &= hd;
     int live_ok=!getenv("UAPLAY_PREVIEW_LIVE_CATALOG") || preview_live_catalog();
     for(int light=0;light<2;light++){
         ui_light_theme=light;
