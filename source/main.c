@@ -1374,7 +1374,13 @@ static void accent(float *r,float *g,float *b){
 static Uint32 ui_press_at=0;
 /* Focus colors now follow the user's saved 0.5.10 palette, including white/black. */
 static SDL_Rect ps5_focus_rect;
+#ifdef UAPLAY_PS5_SOFTWARE
+#include "modern_ui.inc"
+#endif
 static void selection_frame(Paint *p,int x,int y,int w,int h){
+#ifdef UAPLAY_PS5_SOFTWARE
+    (void)p;ps5_focus_rect=(SDL_Rect){x,y,w,h};ui_focus_set(ps5_focus_rect);return;
+#else
     /* A single rounded SDF ring tracks the underlying button/card corners.
        Separate rectangular strokes left square joints on the Switch UI. */
     float r,g,b;accent(&r,&g,&b);
@@ -1386,11 +1392,15 @@ static void selection_frame(Paint *p,int x,int y,int w,int h){
     if(SDL_GetTicks()-ui_press_at<95){x++;y++;w-=2;h-=2;}
     box_alpha(p,x-3,y-3,w+6,h+6,r,g,b,opacity,radius);
     ui_outline_width=0;
+#endif
 }
 
 /* PS5 software backend for Switch v0.5.10 focused press feedback. */
 
 static void press_preview(Paint *p,int x,int y,int w,int h,int radius){
+#ifdef UAPLAY_PS5_SOFTWARE
+    (void)p;(void)x;(void)y;(void)w;(void)h;(void)radius;return;
+#else
     Uint32 age=SDL_GetTicks()-ui_press_at;
     if(age>140 || !ui_press_at)return;
     SDL_Rect r={x,y,w,h};
@@ -1401,14 +1411,34 @@ static void press_preview(Paint *p,int x,int y,int w,int h,int radius){
     ui_outline_width=2;
     box_alpha(p,x+3,y+3,w-6,h-6,rgb_r,rgb_g,rgb_b,a,radius);
     ui_outline_width=old;
+#endif
 }
 static void button(Paint *p,const char *label,int x,int y,int w,int h,int primary){
+#ifdef UAPLAY_PS5_SOFTWARE
+    UiIcon icon=I_NONE;const char *s=label;
+    if(!strncmp(s,"▶  ",strlen("▶  "))){icon=I_PLAY;s+=strlen("▶  ");}
+    else if(!strncmp(s,"✓  ",strlen("✓  "))){icon=I_CHECK;s+=strlen("✓  ");}
+    else if(!strncmp(s,"+  ",3)){icon=I_PLUS;s+=3;}
+    else if(!strcmp(s,TR("Закрити","Close")))icon=I_CLOSE;
+    else if(!strcmp(s,"Більше  ›")){icon=I_NEXT;s="Більше";}
+    else if(!strcmp(s,"Усі  ›")){icon=I_NEXT;s="Усі";}
+    else if(!strcmp(s,"Очистити історію"))icon=I_TRASH;
+    float ar,ag,ab;accent_real(ui_accent_index,&ar,&ag,&ab);
+    SDL_Color fill=primary?(SDL_Color){color_byte(ar),color_byte(ag),color_byte(ab),255}:ui_rgb(ui_theme_enabled&&ui_light_theme?0xe1e7ed:0x28343e,244);
+    if(primary&&ui_light_theme&&ui_accent_index==ACCENT_WHITE)fill=ui_rgb(0x26333e,255);
+    SDL_Color fg=primary?ui_rgb((.2126f*fill.r+.7152f*fill.g+.0722f*fill.b)>143?0x101b21:0xffffff,255):ui_fg();
+    SDL_Rect rect={x,y,w,h};rounded_box(rect,14,fill,NULL);
+    if(!primary)rounded_outline(rect,14,1,ui_rgb(ui_light_theme?0xc4ced9:0x495967,105));
+    if(icon!=I_NONE)ui_labeled_icon(p,icon,s,x,y,w,h,fg);
+    else ui_center_color(p,s,x,y,w,h,p->font_small,fg);
+#else
     /* Flat fills: no simulated border/shadow in Basic White. */
     float secondary=ui_light_theme?.11f:.15f;
     box_alpha(p,x,y,w,h,primary?.89f:secondary,primary?.91f:secondary,
               primary?.94f:secondary,1.f,14);
     text_center_button(p,label,x,y,w,h,p->font_small,
                        primary?.08f:.95f,primary?.10f:.96f,primary?.13f:.98f);
+#endif
 }
 /* Solid vector polygons for crisp icons, independent of font glyph support. */
 static void polygon(Paint *p,const float *points,int count,float r,float g,float b){
@@ -1463,14 +1493,21 @@ static void polygon(Paint *p,const float *points,int count,float r,float g,float
 #endif
 }
 static void search_icon(Paint *p,int cx,int cy,float bg_r,float bg_g,float bg_b){
+#ifdef UAPLAY_PS5_SOFTWARE
+    (void)p;(void)bg_r;(void)bg_g;(void)bg_b;ui_icon(I_SEARCH,cx,cy,25,ui_fg());
+#else
     const float fg=.96f;
     box_alpha(p,cx-11,cy-11,22,22,fg,fg,fg,1.f,11);
     box_alpha(p,cx-7,cy-7,14,14,bg_r,bg_g,bg_b,1.f,7);
     const float handle[]={cx+7,cy+7,cx+11,cy+3,cx+20,cy+12,cx+16,cy+16};
     polygon(p,handle,4,fg,fg,fg);
+#endif
 }
 /* Eight sturdy teeth + circular opening, matching the supplied gear image. */
 static void gear_icon(Paint *p,int cx,int cy,float bg_r,float bg_g,float bg_b){
+#ifdef UAPLAY_PS5_SOFTWARE
+    (void)p;(void)bg_r;(void)bg_g;(void)bg_b;ui_icon(I_GEAR,cx,cy,27,ui_fg());
+#else
     const float fg=.96f,pi=3.14159265f;
     float teeth[8*6*2];
     for(int k=0;k<8;k++){
@@ -1484,6 +1521,7 @@ static void gear_icon(Paint *p,int cx,int cy,float bg_r,float bg_g,float bg_b){
     }
     polygon(p,teeth,48,fg,fg,fg);
     box_alpha(p,cx-5,cy-5,10,10,bg_r,bg_g,bg_b,1.f,5);
+#endif
 }
 static void web_header_bg(Paint *p,int height){
     int old=ui_theme_enabled;ui_theme_enabled=0;
@@ -1494,7 +1532,11 @@ static void web_header_bg(Paint *p,int height){
 static void screen_header(Paint *p,const char *name,const char *context){
     web_header_bg(p,92);
     box_alpha(p,UI_EDGE,23,55,48,.13f,.16f,.20f,1.f,13);
+#ifdef UAPLAY_PS5_SOFTWARE
+    ui_icon(I_BACK,UI_EDGE+27.5f,47,27,ui_fg());
+#else
     text_center(p,"‹",UI_EDGE,25,55,p->font_big,.96f,.97f,.99f);
+#endif
     headline(p,name,105,23,860);
     if(context && *context && strcmp(context,"UAPlay"))
         text_tiny(p,context,979,38,264);
@@ -1509,8 +1551,12 @@ static void list_row(Paint *p,const char *title,int y,int selected,
         box_alpha(p,UI_EDGE,y+9,4,UI_ROW_HEIGHT-18,r,g,b,1.f,2);
         selection_frame(p,UI_EDGE,y,1216,UI_ROW_HEIGHT);
     }
-    text(p,title,UI_EDGE+22,y+9,detail?915:1155);
+    text(p,title,UI_EDGE+22,y+9,detail?915:1100);
     if(detail)text_muted(p,detail,1052,y+13,178);
+#ifdef UAPLAY_PS5_SOFTWARE
+    else ui_icon(I_NEXT,1218,y+UI_ROW_HEIGHT*.5f,18,ui_muted());
+    rounded_outline((SDL_Rect){UI_EDGE,y,1216,UI_ROW_HEIGHT},12,1,ui_rgb(ui_light_theme?0xcbd4dd:0x35434d,65));
+#endif
 }
 static int footer_position,footer_total;
 static Page footer_page;
@@ -1518,13 +1564,15 @@ static void footer(Paint *p,const char *message) {
     box_alpha(p,0,UI_FOOTER_TOP,1280,720-UI_FOOTER_TOP,.047f,.057f,.070f,1.f,0);
     /* Console-specific controller legend, independent of UI accent. */
     float ar=.62f,ag=.64f,ab=.66f;
-    box_alpha(p,UI_EDGE,UI_FOOTER_TOP,1216,2,ar,ag,ab,.78f,0);
+    box_alpha(p,UI_EDGE,UI_FOOTER_TOP,1216,1,ar,ag,ab,.26f,0);
     char position[30];
     snprintf(position,sizeof(position),"%d / %d",footer_position,footer_total);
     text_font(p,footer_total && !(footer_page==CATALOG && expanded_catalog)?position:"UAPLAY",43,682,140,
               p->font_small,ar,ag,ab);
     const char *keys[6],*labels[6];int count=0;
-#if defined(__PS5__) || defined(__PS4__)
+#ifdef UAPLAY_PS5_SOFTWARE
+#define PAD_HINT(k) (k)
+#elif defined(__PS5__) || defined(__PS4__)
 /* Some PS5 homebrew builds lack glyphs for PlayStation symbols. Keep
    unmistakable ASCII hints until an icon atlas is installed. */
 #define PAD_HINT(k) (!strcmp(k,"A")?"X":!strcmp(k,"B")?"O": \
@@ -1582,6 +1630,24 @@ static void footer(Paint *p,const char *message) {
     }
 #undef HINT
 #undef PAD_HINT
+#ifdef UAPLAY_PS5_SOFTWARE
+    int widths[6]={0},badges[6]={0},total=0;UiIcon icons[6]={0};
+    for(int i=0;i<count;i++){
+        const char *k=keys[i];
+        icons[i]=!strcmp(k,"A")?I_CLOSE:!strcmp(k,"B")?I_CIRCLE:!strcmp(k,"X")?I_SQUARE:!strcmp(k,"Y")?I_TRIANGLE:
+            !strcmp(k,"−")?I_OPTIONS:!strcmp(k,"↑↓")?I_UPDOWN:!strcmp(k,"←→")?I_LEFTRIGHT:!strcmp(k,"←→↑↓")?I_DPAD:I_NONE;
+        if(!strcmp(k,"L"))keys[i]="L1";else if(!strcmp(k,"R"))keys[i]="R1";else if(!strcmp(k,"L/R"))keys[i]="L1/R1";
+        badges[i]=icons[i]?28:measure(p,keys[i],p->font_tiny)+14;
+        widths[i]=badges[i]+8+measure(p,labels[i],p->font_tiny)+10;total+=widths[i]+12;
+    }
+    int x=1244-total;if(x<185)x=185;
+    for(int i=0;i<count;i++){
+        int w=badges[i];rounded_box((SDL_Rect){x,681,w,28},icons[i]?14:7,ui_rgb(ui_light_theme?0xe0e6ec:0x232c36,255),NULL);
+        if(icons[i])ui_icon(icons[i],x+w*.5f,695,19,ui_fg());
+        else ui_center_color(p,keys[i],x,681,w,28,p->font_tiny,ui_fg());
+        ui_center_color(p,labels[i],x+w+6,680,widths[i]-w-6,30,p->font_tiny,ui_muted());x+=widths[i]+12;
+    }
+#else
     int widths[6]={0},total=0;
     for(int i=0;i<count;i++){
         int badge_width=measure(p,keys[i],p->font_small)+12;
@@ -1604,6 +1670,7 @@ static void footer(Paint *p,const char *message) {
                   p->font_small,ar,ag,ab);
         x+=widths[i]+12;
     }
+#endif
     /* Notification occupies its own safe zone, never the last selectable row. */
     if(message && *message && strncmp(message,"Offline catalog",15) &&
        strncmp(message,"Офлайн-пошук",strlen("Офлайн-пошук")) &&
@@ -1617,23 +1684,40 @@ static void poster(Paint *p,const Movie *movie,int x,int y,int width,int height,
     UiTexture image=poster_texture(movie,budget);
     if(!image) {
         box(p,x,y,width,height,.15f,.19f,.23f);
+#ifdef UAPLAY_PS5_SOFTWARE
+        ui_icon(movie->series?I_TV:I_FILM,x+width*.5f,y+height*.5f-10,34,ui_muted());
+        ui_center_color(p,"UAPlay",x+4,y+height/2+9,width-8,25,p->font_tiny,ui_muted());
+#else
         text(p,"UAPLAY",x+12,y+height/2-15,width-25);
+#endif
         return;
     }
     UiTexture previous=p->tex;
     p->tex=image;
+#ifdef UAPLAY_PS5_SOFTWARE
+    SDL_SetTextureColorMod((SDL_Texture*)(uintptr_t)image,255,255,255);
+    SDL_SetTextureAlphaMod((SDL_Texture*)(uintptr_t)image,255);
+    rounded_box((SDL_Rect){x,y,width,height},12,ui_rgb(0xffffff,255),(SDL_Texture*)(uintptr_t)image);
+#else
     box(p,x,y,width,height,1,1,1);
+#endif
     p->tex=previous;
     if(movie->rating>0.01f){
         char score[28];
         snprintf(score,sizeof(score),"%.1f",movie->rating);
+#ifdef UAPLAY_PS5_SOFTWARE
+        rounded_box((SDL_Rect){x+7,y+height-32,59,25},8,ui_rgb(0x0b111a,225),NULL);
+        ui_icon(I_STAR,x+19,y+height-19.5f,14,ui_rgb(0xffd788,255));
+        ui_center_color(p,score,x+28,y+height-32,35,25,p->font_tiny,ui_rgb(0xffffff,255));
+#else
         int badge_width=50;
         box_alpha(p,x+5,y+height-34,badge_width,28,.035f,.047f,.061f,.91f,7);
         text_center_button(p,score,x+5,y+height-34,badge_width,28,
                            p->font_tiny,.98f,.96f,.88f);
+#endif
     }
 }
-static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
+static void draw_content(Paint *p,Page page,Movie *movies,int n,int chosen,
                  Source *sources,int sn,int source,const char *heading,const char *status) {
 #ifndef UAPLAY_PS5_SOFTWARE
 #ifdef __PS4__
@@ -1756,8 +1840,8 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
         /* Search is a real touch target, not a missing Unicode glyph. */
         box_alpha(p,887,17,157,47,.13f,.16f,.19f,1.f,15);
         if(focused==5)selection_frame(p,887,17,157,47);
-        search_icon(p,915,38,.13f,.16f,.19f);
-        text_font(p,TR("Пошук","Search"),946,17+(47-text_height(p,TR("Пошук","Search"),p->font_small))/2,
+        search_icon(p,912,40,.13f,.16f,.19f);
+        text_font(p,TR("Пошук","Search"),932,17+(47-text_height(p,TR("Пошук","Search"),p->font_small))/2,
                   88,p->font_small,1.f,1.f,1.f);
         press_preview(p,887,17,157,47,15);
         box_alpha(p,1058,17,53,47,.13f,.16f,.19f,1.f,15);
@@ -1821,8 +1905,12 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
                                    .95f,.97f,.99f);
                 const int favorite=iptv_favorite_index(&ps5_tv_favorites,channel->id)>=0;
                 box_alpha(p,x+144,y+7,31,31,.10f,.13f,.17f,.93f,10);
+#ifdef UAPLAY_PS5_SOFTWARE
+                ui_icon(favorite?I_CHECK:I_STAR,x+159.5f,y+22.5f,19,ui_rgb(favorite?0x3dd7bb:0xffd788,255));
+#else
                 text_center_button(p,favorite?"★":"☆",x+144,y+7,31,31,
                                    p->font_small,.96f,.88f,.62f);
+#endif
                 press_preview(p,x,y,184,184,16);
             }
             if(count){
@@ -1910,7 +1998,11 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
             const int hero_poster_x=UI_EDGE+HERO_W-HERO_PAD-HERO_POSTER_W;
             const int hero_button_y=hero_bottom-HERO_BUTTON_H;
             const int hero_favorite_x=hero_left+205+HERO_BUTTON_GAP;
-            box_alpha(p,UI_EDGE,HERO_Y,HERO_W,HERO_H,.09f,.11f,.14f,1.f,22);
+            #ifdef UAPLAY_PS5_SOFTWARE
+        ui_panel(p,UI_EDGE,HERO_Y,HERO_W,HERO_H,22);
+#else
+        box_alpha(p,UI_EDGE,HERO_Y,HERO_W,HERO_H,.09f,.11f,.14f,1.f,22);
+#endif
             if(n){
                 /* All four inner edges use the same 12px inset, following
                    the user's corrected Switch-style reference layout. */
@@ -1918,8 +2010,14 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
                        HERO_POSTER_W,hero_bottom-hero_top,&poster_budget);
                 headline(p,movies[active].title,hero_left,hero_top,967);
                 char tag[110];
+#ifdef UAPLAY_PS5_SOFTWARE
+                snprintf(tag,sizeof(tag),"%.1f  ·  %s",movies[active].rating,movies[active].year);
+                ui_icon(I_STAR,hero_left+10,hero_top+63,18,ui_rgb(0xf1b95d,255));
+                text_muted(p,tag,hero_left+25,hero_top+50,865);
+#else
                 snprintf(tag,sizeof(tag),"★ %.1f  ·  %s",movies[active].rating,movies[active].year);
                 text_muted(p,tag,hero_left,hero_top+50,890);
+#endif
                 wrapped(p,movies[active].overview,hero_left,hero_top+90,949,2,27,
                         p->font_small,.74f,.79f,.84f);
             }else{
@@ -2114,12 +2212,24 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
             int label_y=y+(SETTINGS_ROW_HEIGHT-text_height(p,items[i],p->font))/2;
             /* Focus colors decorate shapes only. Text stays theme-native
                (dark in Basic White, light in Basic Black). */
+#ifdef UAPLAY_PS5_SOFTWARE
+            const UiIcon main_icons[]={I_PALETTE,I_PLAY,I_LINK,I_GLOBE,I_GLOBE};
+            const UiIcon appearance_icons[]={I_SUN,I_PALETTE,I_IMAGE,I_CLOSE};
+            ui_icon(appearance?appearance_icons[i]:main_icons[i],58,y+SETTINGS_ROW_HEIGHT*.5f,23,ui_fg());
+            text(p,items[i],81,label_y,325);
+            ui_icon(I_NEXT,425,y+SETTINGS_ROW_HEIGHT*.5f,18,ui_muted());
+#else
             text(p,items[i],55,label_y,372);
+#endif
             if(i==selected)
                 selection_frame(p,32,y,417,SETTINGS_ROW_HEIGHT);
             press_preview(p,32,y,417,SETTINGS_ROW_HEIGHT,16);
         }
+        #ifdef UAPLAY_PS5_SOFTWARE
+        ui_panel(p,475,136,773,480,20);
+#else
         box_alpha(p,475,136,773,480,.10f,.12f,.15f,1.f,20);
+#endif
         headline(p,items[selected],513,174,685);
         char description[240]={0};
         const char *help=NULL,*action=TR("Змінити","Change");
@@ -2214,15 +2324,24 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
                DETAILS_PAD=14, DETAILS_POSTER_H=DETAILS_H-2*DETAILS_PAD,
                DETAILS_POSTER_W=DETAILS_POSTER_H*2/3,
                DETAILS_POSTER_X=DETAILS_X+DETAILS_W-DETAILS_PAD-DETAILS_POSTER_W };
+        #ifdef UAPLAY_PS5_SOFTWARE
+        ui_panel(p,DETAILS_X,DETAILS_Y,DETAILS_W,DETAILS_H,21);
+#else
         box_alpha(p,DETAILS_X,DETAILS_Y,DETAILS_W,DETAILS_H,.09f,.11f,.14f,1.f,21);
+#endif
         /* Original 2:3 poster ratio, with identical 14 px gaps on the top,
            right and bottom edges of the information panel. */
         poster(p,&movies[chosen],DETAILS_POSTER_X,DETAILS_Y+DETAILS_PAD,
                DETAILS_POSTER_W,DETAILS_POSTER_H,&poster_budget);
         headline(p,movies[chosen].title,65,138,820);
         char rating_label[64];
+#ifdef UAPLAY_PS5_SOFTWARE
+        snprintf(rating_label,sizeof(rating_label),"%.1f",movies[chosen].rating);
+        ui_icon(I_STAR,77,211,20,ui_rgb(0xf1b95d,255));text_muted(p,rating_label,94,198,790);
+#else
         snprintf(rating_label,sizeof(rating_label),"★ %.1f",movies[chosen].rating);
         text_muted(p,rating_label,67,198,815);
+#endif
         char tag[192];
         const Movie *selected=&movies[chosen];
         if(selected->series && selected->details_state>0 &&
@@ -2367,6 +2486,16 @@ static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
                   .13f*remain*remain,0);
     }
 }
+static void draw(Paint *p,Page page,Movie *movies,int n,int chosen,
+                 Source *sources,int sn,int source,const char *heading,const char *status){
+#ifdef UAPLAY_PS5_SOFTWARE
+    ui_focus_begin(1000+(int)page*100+(page==CATALOG?ui_category*2+expanded_catalog:0));
+#endif
+    draw_content(p,page,movies,n,chosen,sources,sn,source,heading,status);
+#ifdef UAPLAY_PS5_SOFTWARE
+    ui_focus_finish();
+#endif
+}
 static void command(mpv_handle *player,const char *verb,const char *arg) {
     const char *args[]={verb,arg,NULL};
     if(player) mpv_command_async(player,0,args);
@@ -2423,6 +2552,9 @@ static int ps5_player_focus=1; /* rewind, pause, forward, settings, audio, subti
 #endif
 static void draw_player_controls(Paint *p,mpv_handle *player,const Movie *movie) {
     ui_theme_enabled=0; /* Video playback controls remain readable in both themes. */
+#ifdef UAPLAY_PS5_SOFTWARE
+    ui_focus_begin(4000);
+#endif
     double pos=0,duration=0;
     int paused=0;
     if(player){
@@ -2431,14 +2563,23 @@ static void draw_player_controls(Paint *p,mpv_handle *player,const Movie *movie)
         mpv_get_property(player,"pause",MPV_FORMAT_FLAG,&paused);
     }
     box_alpha(p,32,27,141,49,.045f,.063f,.079f,.92f,14);
+#ifdef UAPLAY_PS5_SOFTWARE
+    ui_labeled_icon(p,I_BACK,"Назад",32,27,141,49,ui_fg());
+#else
     text_center(p,"‹  Назад",32,37,141,p->font_small,.96f,.97f,.99f);
+#endif
     if(active_episode_variant>=0 &&
        catalog_next_episode(episodes,episode_count,active_episode_variant)>=0){
         box_alpha(p,969,27,275,49,.045f,.063f,.079f,.92f,14);
         text_center(p,"»  Наступна серія",969,37,275,
                     p->font_small,.96f,.97f,.99f);
     }
+#ifdef UAPLAY_PS5_SOFTWARE
+    for(int y=458;y<720;y+=8){float t=fminf(1.f,(y-458)/84.f);
+        box_alpha(p,0,y,1280,720-y<8?720-y:8,.027f,.034f,.044f,.94f*t,0);}
+#else
     box_alpha(p,0,507,1280,213,.027f,.034f,.044f,.93f,0);
+#endif
     char playback_title[256];
     snprintf(playback_title,sizeof(playback_title),"Відтворення · %s",movie && movie->title[0]?movie->title:"UAPlay");
     text_tiny(p,playback_title,35,519,740);
@@ -2455,7 +2596,7 @@ static void draw_player_controls(Paint *p,mpv_handle *player,const Movie *movie)
 #endif
                   790,519,310);
 #ifdef UAPLAY_PS5_SOFTWARE
-    if(ps5_player_focus==6)box_alpha(p,115,554,1050,30,.22f,.49f,.91f,.75f,15);
+    if(ps5_player_focus==6)selection_frame(p,115,554,1050,30);
 #endif
     box_alpha(p,126,566,1028,6,.34f,.39f,.44f,1.f,3);
     int filled=duration>0?(int)(1028.0*pos/duration):0;
@@ -2467,6 +2608,9 @@ static void draw_player_controls(Paint *p,mpv_handle *player,const Movie *movie)
     snprintf(right,sizeof(right),"%02d:%02d",(int)duration/60,(int)duration%60);
     text_small(p,left,35,552,85);
     text_small(p,right,1167,552,88);
+#ifdef UAPLAY_PS5_SOFTWARE
+    ui_icon(I_VOLUME,43,651,26,ui_fg());
+#endif
     box_alpha(p,70,649,178,5,.35f,.42f,.52f,1.f,3);
     int volume=(int)video_options[1];
     if(volume<0)volume=0;if(volume>130)volume=130;
@@ -2475,21 +2619,32 @@ static void draw_player_controls(Paint *p,mpv_handle *player,const Movie *movie)
     char volume_label[24];snprintf(volume_label,sizeof(volume_label),"%d%%",volume);
     text_tiny(p,volume_label,122,672,100);
     const int centers[]={500,640,780,918,1028,1138};
+#ifdef UAPLAY_PS5_SOFTWARE
+    const UiIcon icons[]={I_REWIND,paused?I_PLAY:I_PAUSE,I_FORWARD,I_GEAR,I_AUDIO,I_CC};
+#else
     const char *icons[]={"−10",paused?"▶":"Ⅱ","+10","","♪","CC"};
+#endif
     const char *labels[]={"10 с назад","Пауза / пуск","10 с вперед",
                           "Параметри","Аудіо","Субтитри"};
     for(int i=0;i<6;i++){
         const int w=i==1?76:58,top=i==1?604:613;
 #ifdef UAPLAY_PS5_SOFTWARE
-        if(ps5_player_focus==i)
-            box_alpha(p,centers[i]-w/2-4,top-4,w+8,w+8,.28f,.62f,1.f,1.f,(w+8)/2);
-#endif
+        if(ps5_player_focus==i)selection_frame(p,centers[i]-w/2,top,w,w);
+        SDL_Rect rect={centers[i]-w/2,top,w,w};
+        rounded_box(rect,w/2,ui_rgb(i==1?0xe9f0f3:0x26333c,i==1?255:230),NULL);
+        if(i!=1)rounded_outline(rect,w/2,1,ui_rgb(0x71818c,115));
+        ui_icon(icons[i],centers[i],top+w*.5f,i==1?35:27,ui_rgb(i==1?0x14212a:0xf4f6f8,255));
+#else
         box_alpha(p,centers[i]-w/2,top,w,w,.18f,.22f,.26f,.94f,w/2);
         text_center(p,icons[i],centers[i]-w/2,top+(w-28)/2,w,
                     i==0||i==2?p->font_small:p->font,.98f,.98f,.99f);
         if(i==3)gear_icon(p,centers[i],643,.18f,.22f,.26f);
+#endif
         text_center(p,labels[i],centers[i]-72,678,144,p->font_tiny,.78f,.84f,.89f);
     }
+#ifdef UAPLAY_PS5_SOFTWARE
+    ui_focus_finish();
+#endif
 }
 static void draw_next_episode_prompt(Paint *p,const Episode *next,int seconds){
     ui_theme_enabled=0;
@@ -2699,6 +2854,9 @@ static int keyboard(char *value,size_t size) {
         }
         if(!active)break;
         Paint *p=keyboard_paint;
+#ifdef UAPLAY_PS5_SOFTWARE
+        ui_focus_begin(5000+uk_mode);
+#endif
         box_alpha(p,0,0,1280,720,.035f,.045f,.061f,1.f,0);
         headline(p,keyboard_url_mode?TR("UAPlay-web — домен Worker",
                                              "UAPlay-web — Worker hostname"):
@@ -2736,7 +2894,14 @@ static int keyboard(char *value,size_t size) {
                    (uk_mode?"Цифри та символи":"Домен: латинські літери") :
                    (uk_mode?"Розкладка: УК (ЙЦУКЕН)":"Розкладка: EN (QWERTY)"),
                    100,598,700);
+#ifdef UAPLAY_PS5_SOFTWARE
+        const UiIcon hints[]={I_CLOSE,I_SQUARE,I_TRIANGLE,I_CIRCLE};
+        const char *labels[]={"Вибрати","Стерти","Мова","Назад"};
+        for(int i=0;i<4;i++){int x=100+i*205;ui_icon(hints[i],x+13,648,22,ui_fg());text_small(p,labels[i],x+32,635,168);}
+        ui_focus_finish();
+#else
         text_muted(p,"X — вибрати   [] — стерти   ^ — мова   O — назад",100,635,1060);
+#endif
         present_ui(keyboard_window);
         SDL_Delay(16);
     }
@@ -4750,7 +4915,11 @@ int main(void) {
         /* Do not stack a fixed sleep on top of the time that Eden/Switch
            already spent drawing or waiting for VSync. */
         Uint32 frame_elapsed=SDL_GetTicks()-frame_started_at;
+#ifdef UAPLAY_PS5_SOFTWARE
+        Uint32 frame_budget=page==PLAYER||ui_focus_moving()?16u:33u;
+#else
         Uint32 frame_budget=page==PLAYER?16u:33u;
+#endif
         if(frame_elapsed<frame_budget)SDL_Delay(frame_budget-frame_elapsed);
     }
 #ifdef __SWITCH__
