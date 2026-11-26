@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -eEuo pipefail
+trap 'echo "Windows build failed at line $LINENO: $BASH_COMMAND" >&2' ERR
 cd "$(dirname "$0")/.."
 [[ "$MSYSTEM" == UCRT64 ]] || { echo "Run in MSYS2 UCRT64"; exit 1; }
 out="${1:-build/windows-preview}"
@@ -17,10 +18,23 @@ expected="$(awk '{print $1;exit}' "$work/checksum")"
 [[ "$expected" =~ ^[a-fA-F0-9]{64}$ ]]
 (cd "$work" && printf '%s  %s\n' "$expected" "$archive" | sha256sum -c -)
 unzip -q "$work/$archive" -d "$work"
-vlc="$(find "$work" -type f -name libvlc.dll -print -quit)"
-vlc="$(dirname "$vlc")"
-test -f "$vlc/sdk/include/vlc/vlc.h"
+dll="$(find "$work" -type f -iname libvlc.dll -print -quit)"
+[[ -n "$dll" ]] || { echo "libvlc.dll missing from official VLC archive" >&2; exit 1; }
+vlc="$(dirname "$dll")"
+echo "VLC runtime: $vlc"
 test -f "$vlc/libvlccore.dll"
+test -d "$vlc/plugins"
+vlc_include="$vlc/sdk/include"
+if [[ ! -f "$vlc_include/vlc/vlc.h" ]]; then
+    # Official end-user ZIPs need not contain the SDK. Obtain the identical
+    # release's public API headers, not an unrelated VLC major version.
+    echo "VLC ZIP has no SDK headers; fetching VideoLAN VLC $version headers"
+    git clone --quiet --depth 1 --filter=blob:none --sparse --branch "$version" https://github.com/videolan/vlc.git "$work/vlc-source"
+    git -C "$work/vlc-source" sparse-checkout set include/vlc
+    vlc_include="$work/vlc-source/include"
+fi
+[[ -f "$vlc_include/vlc/vlc.h" ]] || { echo "VLC API headers missing: $vlc_include" >&2; exit 1; }
+echo "VLC headers: $vlc_include"
 cp "$vlc/"*.dll "$out/"
 cp -a "$vlc/plugins" "$out/"
 # Preserve upstream licensing files for the bundled VLC distribution.
@@ -37,7 +51,7 @@ for f in source/*.c; do
 done
 gcc -std=gnu11 -O2 -g -Wall -Wextra -D__PS5__ -DUAPLAY_PS5_SOFTWARE \
     -DUAPLAY_USE_VLC_COMPAT -DUAPLAY_DESKTOP_PREVIEW -DSDL_MAIN_HANDLED \
-    -include desktop/win_compat.h -Isource -I"$vlc/sdk/include" "${cflags[@]}" \
+    -include desktop/win_compat.h -Isource -I"$vlc_include" "${cflags[@]}" \
     "${sources[@]}" ps5/libvlc_mpv.c desktop/host_platform.c desktop/virtual_pad.c \
     -o "$out/UAPlay.exe" "${libs[@]}" "$vlc/libvlc.dll" -lm -pthread
 cp -a romfs "$out/"
