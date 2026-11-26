@@ -137,6 +137,15 @@ static int preview_smoke(Paint *paint){
     snprintf(sources[1].title,sizeof(sources[1].title),"Тестове джерело 2");
     int ok=preview_pad_selftest();
     ok &= preview_card_layout(paint);
+    for(int mode=0;mode<2;mode++){
+        SDL_Rect lang=keyboard_key_rect(mode,3,0),space=keyboard_key_rect(mode,3,1),search=keyboard_key_rect(mode,3,2);
+        ok &= keyboard_columns(mode,3)==3 && space.x+space.w/2==640 &&
+              lang.x+lang.w<space.x && space.x+space.w<search.x &&
+              lang.x+search.x+search.w==1280 &&
+              keyboard_nearest_col(mode,3,lang.x+lang.w/2)==0 &&
+              keyboard_nearest_col(mode,3,640)==1 &&
+              keyboard_nearest_col(mode,3,search.x+search.w/2)==2;
+    }
     for(int light=0;light<2;light++){
         ui_light_theme=light;
         int ambient_ok=ui_standard_background();

@@ -1808,12 +1808,17 @@ static void list_row(Paint *p,const char *title,int y,int selected,
     text(p,title,UI_EDGE+22,y+9,detail?915:1100);
     if(detail){
 #ifdef UAPLAY_PS5_SOFTWARE
-        if(!strncmp(detail,"✓ ",strlen("✓ "))){
-            ui_icon(I_CHECK,1063,y+UI_ROW_HEIGHT*.5f,17,ui_fg());
-            text_muted(p,detail+strlen("✓ "),1078,y+13,152);
-        }else
-#endif
+        const int right=UI_EDGE+1216-22;
+        int checked=!strncmp(detail,"✓ ",strlen("✓ "));
+        const char *label=checked?detail+strlen("✓ "):detail;
+        int w=measure(p,label,p->font_small);
+        if(w>238)w=238;
+        int x=right-w;
+        if(checked)ui_icon(I_CHECK,x-15,y+UI_ROW_HEIGHT*.5f,17,ui_fg());
+        text_muted(p,label,x,text_midline_top(p,label,p->font_small,y+UI_ROW_HEIGHT/2),w+1);
+#else
         text_muted(p,detail,1052,y+13,178);
+#endif
     }
 #ifdef UAPLAY_PS5_SOFTWARE
     else ui_icon(I_NEXT,1218,y+UI_ROW_HEIGHT*.5f,18,ui_muted());
@@ -3095,6 +3100,28 @@ static void configure_stream(mpv_handle *player,const char *url) {
         mpv_set_property_string(player,"referrer","https://hdvbua.pro/");
     else mpv_set_property_string(player,"referrer","");
 }
+#ifdef __PS5__
+static const int keyboard_counts[2][3]={{10,9,7},{12,11,10}};
+static int keyboard_columns(int mode,int row){return row==3?3:keyboard_counts[mode][row];}
+static SDL_Rect keyboard_key_rect(int mode,int row,int col){
+    if(row==3){
+        /* Same height as letter keys. Symmetric icon keys flank space. */
+        static const int x[]={320,406,882},w[]={78,468,78};
+        return (SDL_Rect){x[col],507,w[col],68};
+    }
+    int count=keyboard_columns(mode,row);
+    return (SDL_Rect){640-(count*86-8)/2+col*86,208+row*91,78,68};
+}
+static int keyboard_nearest_col(int mode,int row,int center){
+    int best=0,distance=2000;
+    for(int i=0;i<keyboard_columns(mode,row);i++){
+        SDL_Rect r=keyboard_key_rect(mode,row,i);
+        int d=center<r.x?r.x-center:center>=r.x+r.w?center-(r.x+r.w-1):0;
+        if(d<distance){best=i;distance=d;}
+    }
+    return best;
+}
+#endif
 static int keyboard(char *value,size_t size) {
 #ifdef __PS5__
     /* Physical rows, not alphabetical lists: UA ЙЦУКЕН / EN QWERTY.
@@ -3115,12 +3142,18 @@ static int keyboard(char *value,size_t size) {
         {"/",":","_","?","&","=","%","+","#","@","~",NULL},
         {"!","$","(",")","[","]",",",";","*","^",NULL,NULL}
     };
-    static const int counts[2][3]={{10,9,7},{12,11,10}};
-    static const char *actions[]={"ПРОБІЛ","СТЕРТИ","EN / УК","ЗНАЙТИ","СКАСУВАТИ"};
+
     if(!keyboard_paint || !keyboard_window || !value || size<2)return 0;
     value[0]=0;
     int uk_mode=keyboard_url_mode?0:1,row=0,col=0,active=1,confirmed=0;
+    Uint32 stick_time=0;int stick_key=0;
     while(active){
+        SDL_GameController *keyboard_pad=NULL;
+        for(int i=0;i<SDL_NumJoysticks();i++){
+            keyboard_pad=SDL_GameControllerFromInstanceID(SDL_JoystickGetDeviceInstanceID(i));
+            if(keyboard_pad)break;
+        }
+        stick_arrow(keyboard_pad,0,&stick_time,&stick_key);
         SDL_Event event;
 #ifdef UAPLAY_DESKTOP_PREVIEW
         while(preview_poll_event(&event)){
@@ -3144,12 +3177,29 @@ static int keyboard(char *value,size_t size) {
                     default:break;
                 }
             }
+            int px=-1,py=-1;
+            if(event.type==SDL_FINGERDOWN){px=(int)(event.tfinger.x*1280);py=(int)(event.tfinger.y*720);}
+            else if(event.type==SDL_MOUSEBUTTONDOWN&&event.button.button==SDL_BUTTON_LEFT&&event.button.which!=SDL_TOUCH_MOUSEID){
+#ifdef UAPLAY_PS5_SOFTWARE
+                px=event.button.x;py=event.button.y;
+#else
+                int ww=1280,hh=720;SDL_GetWindowSize(keyboard_window,&ww,&hh);
+                px=event.button.x*1280/(ww?ww:1280);py=event.button.y*720/(hh?hh:720);
+#endif
+            }
+            if(px>=0&&py>=0){
+                SDL_Point point={px,py};
+                for(int r=0;r<4;r++)for(int c=0;c<keyboard_columns(uk_mode,r);c++){
+                    SDL_Rect rect=keyboard_key_rect(uk_mode,r,c);
+                    if(SDL_PointInRect(&point,&rect)){row=r;col=c;key=SDL_CONTROLLER_BUTTON_A;}
+                }
+            }
             if(key==SDL_CONTROLLER_BUTTON_B || key==SDL_CONTROLLER_BUTTON_BACK){
                 active=0;break;
             }
             if(key==SDL_CONTROLLER_BUTTON_Y){
                 uk_mode=!uk_mode;
-                int width=row==3?5:counts[uk_mode][row];
+                int width=keyboard_columns(uk_mode,row);
                 if(col>=width)col=width-1;
                 continue;
             }
@@ -3162,27 +3212,17 @@ static int keyboard(char *value,size_t size) {
                 continue;
             }
             if(key==SDL_CONTROLLER_BUTTON_DPAD_LEFT){
-                int width=row==3?5:counts[uk_mode][row];
+                int width=keyboard_columns(uk_mode,row);
                 col=(col+width-1)%width;continue;
             }
             if(key==SDL_CONTROLLER_BUTTON_DPAD_RIGHT){
-                int width=row==3?5:counts[uk_mode][row];
+                int width=keyboard_columns(uk_mode,row);
                 col=(col+1)%width;continue;
             }
-            if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN){
-                int oldwidth=row==3?5:counts[uk_mode][row];
-                int destination=(row+1)%4;
-                int newwidth=destination==3?5:counts[uk_mode][destination];
-                col=(col*newwidth)/oldwidth;
-                if(col>=newwidth)col=newwidth-1;
-                row=destination;continue;
-            }
-            if(key==SDL_CONTROLLER_BUTTON_DPAD_UP){
-                int oldwidth=row==3?5:counts[uk_mode][row];
-                int destination=(row+3)%4;
-                int newwidth=destination==3?5:counts[uk_mode][destination];
-                col=(col*newwidth)/oldwidth;
-                if(col>=newwidth)col=newwidth-1;
+            if(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN||key==SDL_CONTROLLER_BUTTON_DPAD_UP){
+                SDL_Rect current=keyboard_key_rect(uk_mode,row,col);
+                int destination=(row+(key==SDL_CONTROLLER_BUTTON_DPAD_DOWN?1:3))%4;
+                col=keyboard_nearest_col(uk_mode,destination,current.x+current.w/2);
                 row=destination;continue;
             }
             if(key!=SDL_CONTROLLER_BUTTON_A)continue;
@@ -3196,24 +3236,13 @@ static int keyboard(char *value,size_t size) {
                 continue;
             }
             switch(col){
-                case 0:{
+                case 0:uk_mode=!uk_mode;break;
+                case 1:{
                     size_t n=strlen(value);
                     if(n+1<size){value[n]=' ';value[n+1]=0;}
                     break;
                 }
-                case 1:{
-                    size_t n=strlen(value);
-                    if(n){do{n--;}while(n && ((unsigned char)value[n]&0xc0)==0x80);
-                          value[n]=0;}
-                    break;
-                }
-                case 2:{
-                    uk_mode=!uk_mode;
-                    col=2;
-                    break;
-                }
-                case 3:confirmed=value[0]!=0;active=0;break;
-                case 4:active=0;break;
+                case 2:if(value[0]){confirmed=1;active=0;}break;
             }
         }
         if(!active)break;
@@ -3234,35 +3263,36 @@ static int keyboard(char *value,size_t size) {
         text(p,value[0]?value:(keyboard_url_mode?
                  "example.workers.dev":"Введіть назву фільму або серіалу…"),91,130,1098);
         for(int r=0;r<3;r++){
-            int count=counts[uk_mode][r];
-            int key_width=78,step=86;
-            int first_x=640-(count*step-8)/2;
+            int count=keyboard_columns(uk_mode,r);
             for(int c=0;c<count;c++){
                 const char *label=keyboard_url_mode && uk_mode?
                           url_symbols[r][c]:(uk_mode?uk[r][c]:en[r][c]);
                 if(!label)continue;
-                int x=first_x+c*step,y=208+r*91;
-                box_alpha(p,x,y,key_width,68,r==row && c==col?.21f:.105f,
-                          r==row && c==col?.34f:.155f,
-                          r==row && c==col?.42f:.20f,1.f,14);
-                if(r==row && c==col)selection_frame(p,x,y,key_width,68);
-                text_center_button(p,label,x,y,key_width,68,p->font,.98f,.98f,.99f);
+                SDL_Rect rect=keyboard_key_rect(uk_mode,r,c);
+                int x=rect.x,y=rect.y;
+                if(r==row && c==col)selection_frame(p,x,y,rect.w,rect.h);
+#ifdef UAPLAY_PS5_SOFTWARE
+                ui_button_depth(rect,14,ui_rgb(ui_light_theme?0xe0e7ef:0x28343e,255),0);
+#else
+                box_alpha(p,x,y,rect.w,rect.h,.105f,.155f,.20f,1.f,14);
+#endif
+                text_center_button(p,label,x,y,rect.w,rect.h,p->font,.98f,.98f,.99f);
             }
         }
-        for(int c=0;c<5;c++){
-            int x=100+c*218,y=507;
-            box_alpha(p,x,y,204,64,row==3 && col==c?.21f:.10f,
-                      row==3 && col==c?.34f:.15f,row==3 && col==c?.41f:.20f,1.f,14);
-            if(row==3 && col==c)selection_frame(p,x,y,204,64);
-            text_center_button(p,keyboard_url_mode && c==2?"123 / ABC":
-                               keyboard_url_mode && c==3?TR("ГОТОВО","DONE"):
-                               actions[c],x,y,204,64,p->font_small,
-                               .98f,.98f,.99f);
+        for(int c=0;c<3;c++){
+            SDL_Rect rect=keyboard_key_rect(uk_mode,3,c);
+            if(row==3 && col==c)selection_frame(p,rect.x,rect.y,rect.w,rect.h);
+#ifdef UAPLAY_PS5_SOFTWARE
+            ui_button_depth(rect,14,ui_rgb(ui_light_theme?0xe0e7ef:0x28343e,255),0);
+            if(c!=1)ui_icon(c==0?I_GLOBE:keyboard_url_mode?I_CHECK:I_SEARCH,
+                         rect.x+rect.w*.5f,rect.y+rect.h*.5f,29,ui_fg());
+            else ui_center_color(p,TR("ПРОБІЛ","SPACE"),rect.x,rect.y,rect.w,rect.h,p->font_small,ui_fg());
+#else
+            box_alpha(p,rect.x,rect.y,rect.w,rect.h,.105f,.155f,.20f,1.f,14);
+            text_center_button(p,c==0?"EN / УК":c==1?TR("ПРОБІЛ","SPACE"):keyboard_url_mode?"OK":"›",
+                               rect.x,rect.y,rect.w,rect.h,p->font_small,.98f,.98f,.99f);
+#endif
         }
-        text_muted(p,keyboard_url_mode?
-                   (uk_mode?"Цифри та символи":"Домен: латинські літери") :
-                   (uk_mode?"Розкладка: УК (ЙЦУКЕН)":"Розкладка: EN (QWERTY)"),
-                   100,598,700);
 #ifdef UAPLAY_PS5_SOFTWARE
         const UiIcon hints[]={I_CLOSE,I_SQUARE,I_TRIANGLE,I_CIRCLE};
         const char *labels[]={"Вибрати","Стерти","Мова","Назад"};
