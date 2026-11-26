@@ -81,6 +81,20 @@ static int preview_focus_motion(Paint *paint,Movie *movies,Source *sources){
 }
 static int preview_iptv_focus(Paint *p,Movie *movies,Source *sources){
     int ok=1;
+    tv_country_menu_init();
+    int ncountry=0;const IptvCountry *countries=iptv_countries(&ncountry);
+    const char *expected[]={"UA","US","DE","UK","PL","IT"};
+    ok &= TV_QUICK_COUNT==6&&tv_other_count+TV_QUICK_COUNT==ncountry;
+    for(int i=0;i<TV_QUICK_COUNT;i++){
+        int index=tv_country_at(IPTV_COUNTRIES,i);
+        ok &= index>=0&&index<ncountry&&!strcmp(countries[index].code,expected[i]);
+    }
+    for(int i=0;i<tv_other_count;i++)
+        for(int j=0;j<TV_QUICK_COUNT;j++)ok &= tv_country_at(IPTV_MORE_COUNTRIES,i)!=tv_country_at(IPTV_COUNTRIES,j);
+    ps5_tv_country=iptv_country_index("UA");tv_country_menu_select();
+    ok &= tv_quick_row==0;
+    ok &= preview_page(p,IPTV_COUNTRIES,movies,sources,"iptv-quick-countries");
+    ok &= preview_page(p,IPTV_MORE_COUNTRIES,movies,sources,"iptv-other-countries");
     ps5_tv_selection=4;ps5_tv_filter_focus=0;
     tv_focus_move(SDL_CONTROLLER_BUTTON_DPAD_UP,12);
     ok &= ps5_tv_filter_focus==2||ps5_tv_filter_focus==3;
