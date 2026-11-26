@@ -172,6 +172,22 @@ static int preview_smoke(Paint *paint){
         ok &= preview_page(paint,ACCENT_PALETTE,movies,sources,light?"accent-light":"accent-dark");
         ok &= preview_page(paint,PROVIDERS,movies,sources,light?"providers-light":"providers-dark");
         ok &= preview_page(paint,SOURCES,movies,sources,light?"sources-light":"sources-dark");
+        ok &= preview_page(paint,PROVIDER_SETTINGS,movies,sources,light?"provider-settings-light":"provider-settings-dark");
+        ok &= preview_page(paint,VIDEO_SETTINGS,movies,sources,light?"video-settings-light":"video-settings-dark");
+        season_count=2;season_ids[0]=1;season_ids[1]=2;selected_season=0;selected_episode=0;
+        episode_count=4;
+        for(int i=0;i<4;i++){
+            episodes[i]=(Episode){0};episodes[i].season=1+i/2;episodes[i].number=1+i%2;
+            snprintf(episodes[i].title,sizeof(episodes[i].title),"Серія %d",episodes[i].number);
+        }
+        ok &= preview_page(paint,SEASONS,movies,sources,light?"seasons-light":"seasons-dark");
+        ok &= preview_page(paint,EPISODES,movies,sources,light?"episodes-light":"episodes-dark");
+        season_count=episode_count=0;
+        ui_category=0;expanded_catalog=0;catalog_hero_focus=8;
+        ok &= preview_page(paint,CATALOG,movies,sources,light?"inactive-header-focus-light":"inactive-header-focus-dark");
+        SDL_Rect inactive={295,19,95,43};
+        ok &= SDL_RectEquals(&ui_focus.target,&inactive)&&ui_focus.target_radius==15.f;
+        catalog_hero_focus=0;
     }
     ok &= preview_focus_motion(paint,movies,sources);
     ok &= preview_iptv_focus(paint,movies,sources);

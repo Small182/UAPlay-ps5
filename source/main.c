@@ -1789,16 +1789,22 @@ static void screen_header(Paint *p,const char *name,const char *context){
 }
 static void list_row(Paint *p,const char *title,int y,int selected,
                      const char *detail){
+#ifdef UAPLAY_PS5_SOFTWARE
+    /* Source, season, episode, provider and settings lists share the same
+       raised surface; the selection ring is the only focus decoration. */
+    if(selected)selection_frame(p,UI_EDGE,y,1216,UI_ROW_HEIGHT);
+    ui_button_depth((SDL_Rect){UI_EDGE,y,1216,UI_ROW_HEIGHT},12,
+                    ui_rgb(ui_light_theme?0xe0e7ef:0x28343e,255),0);
+#else
     box_alpha(p,UI_EDGE,y,1216,UI_ROW_HEIGHT,
               selected?.20f:.085f,selected?.30f:.105f,
               selected?.38f:.135f,1.f,12);
     if(selected){
         float r,g,b;accent(&r,&g,&b);
-#ifndef UAPLAY_PS5_SOFTWARE
         box_alpha(p,UI_EDGE,y+9,4,UI_ROW_HEIGHT-18,r,g,b,1.f,2);
-#endif
         selection_frame(p,UI_EDGE,y,1216,UI_ROW_HEIGHT);
     }
+#endif
     text(p,title,UI_EDGE+22,y+9,detail?915:1100);
     if(detail){
 #ifdef UAPLAY_PS5_SOFTWARE
@@ -1811,7 +1817,6 @@ static void list_row(Paint *p,const char *title,int y,int selected,
     }
 #ifdef UAPLAY_PS5_SOFTWARE
     else ui_icon(I_NEXT,1218,y+UI_ROW_HEIGHT*.5f,18,ui_muted());
-    rounded_outline((SDL_Rect){UI_EDGE,y,1216,UI_ROW_HEIGHT},12,1,ui_rgb(ui_light_theme?0xcbd4dd:0x35434d,65));
 #endif
 }
 static int footer_position,footer_total;
@@ -2044,10 +2049,14 @@ static void draw_content(Paint *p,Page page,Movie *movies,int n,int chosen,
             int preset=accent_visible[i];
             int x=ACCENT_GRID_X+(i%ACCENT_COLS)*ACCENT_STEP_X;
             int y=ACCENT_GRID_Y+(i/ACCENT_COLS)*ACCENT_STEP_Y;
-            box_alpha(p,x,y,ACCENT_CARD_W,ACCENT_CARD_H,
-                      .11f,.14f,.18f,1.f,15);
-            if(i==accent_selected)
-                selection_frame(p,x,y,ACCENT_CARD_W,ACCENT_CARD_H);
+#ifdef UAPLAY_PS5_SOFTWARE
+            if(i==accent_selected)selection_frame(p,x,y,ACCENT_CARD_W,ACCENT_CARD_H);
+            ui_button_depth((SDL_Rect){x,y,ACCENT_CARD_W,ACCENT_CARD_H},15,
+                            ui_rgb(ui_light_theme?0xe0e7ef:0x28343e,255),0);
+#else
+            box_alpha(p,x,y,ACCENT_CARD_W,ACCENT_CARD_H,.11f,.14f,.18f,1.f,15);
+            if(i==accent_selected)selection_frame(p,x,y,ACCENT_CARD_W,ACCENT_CARD_H);
+#endif
             float r,g,b;accent_real(preset,&r,&g,&b);
             /* Paint accurate swatches, bypassing the Basic White grayscale
                inversion and the wallpaper panel translucency. A dark 2px
@@ -2103,9 +2112,13 @@ static void draw_content(Paint *p,Page page,Movie *movies,int n,int chosen,
             int x=main_tabs[i].x,w=main_tabs[i].w,focus=main_tabs[i].focus;
             if(focus==focused)selection_frame(p,x,19,w,43);
 #ifdef UAPLAY_PS5_SOFTWARE
-            int dy=ui_button_depth((SDL_Rect){x,19,w,43},15,
-                ui_rgb(focus==active?(ui_light_theme?0xdbe4ed:0x344353):(ui_light_theme?0xe0e7ef:0x25323f),255),0);
-            text_center_button(p,tabs[i],x,19+dy,w,43,
+            /* Only the open section has a raised face. Focus never changes
+               the tab fill; inactive sections remain bare header labels. */
+            if(focus==focused)ui_focus.pending_radius=15.f;
+            if(focus==active)
+                ui_button_depth((SDL_Rect){x,19,w,43},15,
+                    ui_rgb(ui_light_theme?0xdbe4ed:0x344353,255),0);
+            text_center_button(p,tabs[i],x,19,w,43,
 #else
             if(focus==active)box_alpha(p,x,19,w,43,.19f,.24f,.28f,1.f,16);
             text_center_button(p,tabs[i],x,19,w,43,
@@ -2382,25 +2395,31 @@ static void draw_content(Paint *p,Page page,Movie *movies,int n,int chosen,
         };
         for(int i=0;i<4;i++){
             int x=32+i*158;
-            box_alpha(p,x,101,145,46,i==ps5_wallpaper_filter?.20f:.09f,
-                      .19f,.25f,1.f,13);
-            if(ps5_wallpaper_focus && i==ps5_wallpaper_filter)
-                selection_frame(p,x,101,145,46);
+#ifdef UAPLAY_PS5_SOFTWARE
+            if(ps5_wallpaper_focus && i==ps5_wallpaper_filter)selection_frame(p,x,101,145,46);
+            ui_button_depth((SDL_Rect){x,101,145,46},13,
+                 ui_rgb(i==ps5_wallpaper_filter?(ui_light_theme?0xdbe4ed:0x344353):(ui_light_theme?0xe0e7ef:0x28343e),255),0);
+#else
+            box_alpha(p,x,101,145,46,i==ps5_wallpaper_filter?.20f:.09f,.19f,.25f,1.f,13);
+            if(ps5_wallpaper_focus && i==ps5_wallpaper_filter)selection_frame(p,x,101,145,46);
+#endif
             text_center_button(p,ui_text(filters[i]),x,101,145,46,
                                p->font_small,1.f,1.f,1.f);
         }
-        box_alpha(p,674,101,360,46,.09f,.13f,.16f,1.f,12);
 #ifdef UAPLAY_PS5_SOFTWARE
+        ui_button_depth((SDL_Rect){674,101,360,46},12,ui_rgb(ui_light_theme?0xe0e7ef:0x28343e,255),0);
         ui_icon(I_SEARCH,697,124,22,ui_fg());
         text_small(p,ps5_wallpaper_query[0]?ps5_wallpaper_query:TR("Пошук","Search"),717,109,306);
 #else
+        box_alpha(p,674,101,360,46,.09f,.13f,.16f,1.f,12);
         text_small(p,ps5_wallpaper_query[0]?ps5_wallpaper_query:
                     TR("X: Пошук","X: Search"),690,109,330);
 #endif
-        box_alpha(p,1050,101,196,46,.13f,.17f,.20f,1.f,12);
 #ifdef UAPLAY_PS5_SOFTWARE
+        ui_button_depth((SDL_Rect){1050,101,196,46},12,ui_rgb(ui_light_theme?0xe0e7ef:0x28343e,255),0);
         ui_labeled_icon(p,I_IMAGE,TR("Стандартні","Default"),1050,101,196,46,ui_fg());
 #else
+        box_alpha(p,1050,101,196,46,.13f,.17f,.20f,1.f,12);
         text_center_button(p,TR("Y: Стандартні","Y: Default"),
                            1050,101,196,46,p->font_small,1.f,1.f,1.f);
 #endif
@@ -2514,10 +2533,14 @@ static void draw_content(Paint *p,Page page,Movie *movies,int n,int chosen,
         int rows=appearance?APPEARANCE_COUNT:SETTING_COUNT;
         for(int i=0;i<rows;i++){
             int y=SETTINGS_Y+i*SETTINGS_ROW_STEP;
+#ifdef UAPLAY_PS5_SOFTWARE
+            if(i==selected)selection_frame(p,32,y,417,SETTINGS_ROW_HEIGHT);
+            ui_button_depth((SDL_Rect){32,y,417,SETTINGS_ROW_HEIGHT},16,
+                            ui_rgb(ui_light_theme?0xe0e7ef:0x28343e,255),0);
+#else
             box_alpha(p,32,y,417,SETTINGS_ROW_HEIGHT,
                       i==selected?.20f:.09f,i==selected?.29f:.11f,
                       i==selected?.37f:.14f,1.f,16);
-#ifndef UAPLAY_PS5_SOFTWARE
             if(i==selected){
                 float r,g,b;accent(&r,&g,&b);
                 box_alpha(p,32,y+11,5,42,r,g,b,1.f,2);
@@ -2535,8 +2558,10 @@ static void draw_content(Paint *p,Page page,Movie *movies,int n,int chosen,
 #else
             text(p,items[i],55,label_y,372);
 #endif
+#ifndef UAPLAY_PS5_SOFTWARE
             if(i==selected)
                 selection_frame(p,32,y,417,SETTINGS_ROW_HEIGHT);
+#endif
             press_preview(p,32,y,417,SETTINGS_ROW_HEIGHT,16);
         }
         #ifdef UAPLAY_PS5_SOFTWARE
@@ -2769,9 +2794,15 @@ static void draw_content(Paint *p,Page page,Movie *movies,int n,int chosen,
         for(int i=0;i<VIDEO_OPTION_COUNT;i++) {
             int option=visible_video_options[i];
             int y=132+i*68;
+#ifdef UAPLAY_PS5_SOFTWARE
+            if(i==selected_video_option)selection_frame(p,UI_EDGE,y,1216,60);
+            ui_button_depth((SDL_Rect){UI_EDGE,y,1216,60},13,
+                            ui_rgb(ui_light_theme?0xe0e7ef:0x28343e,255),0);
+#else
             box_alpha(p,UI_EDGE,y,1216,60,i==selected_video_option?.20f:.09f,
                       i==selected_video_option?.30f:.11f,
                       i==selected_video_option?.38f:.14f,1.f,13);
+#endif
             const char *label=ui_text(video_titles[option]);
             text_font(p,label,55,
                       y+(60-text_height(p,label,p->font))/2,
@@ -2785,13 +2816,11 @@ static void draw_content(Paint *p,Page page,Movie *movies,int n,int chosen,
             else if(option==5)snprintf(value,sizeof(value),"%+.2f с",video_options[option]);
             else snprintf(value,sizeof(value),"%.0f",video_options[option]);
             text_center_button(p,value,963,y,240,60,p->font,.95f,.96f,.98f);
+#ifndef UAPLAY_PS5_SOFTWARE
             if(i==selected_video_option){
-#ifdef UAPLAY_PS5_SOFTWARE
-                selection_frame(p,UI_EDGE,y,1216,60);
-#else
                 float r,g,b;accent(&r,&g,&b);box_alpha(p,UI_EDGE,y+12,4,36,r,g,b,1.f,2);
-#endif
             }
+#endif
         }
         text_tiny(p,"Якість HLS визначається потоками, які надає джерело.",50,626,1150);
         footer(p,NULL);
