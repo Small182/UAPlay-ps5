@@ -1108,7 +1108,12 @@ int catalog_load_page_sorted(const char *category, const char *query, int page,
     char key[256];
     tmdb_key(key,sizeof(key));
     if (!key[0]) {
+#ifdef UAPLAY_DESKTOP_PREVIEW
+        snprintf(error,error_size,TR("TMDb: відсутній API-ключ. Перевірте налаштування каталогу",
+                                     "TMDb: missing API key. Check catalogue configuration"));
+#else
         snprintf(error,error_size,TR("TMDb: перевірте ключ і мережу PS5","TMDb: check PS5 key and network"));
+#endif
         return 0;
     }
 

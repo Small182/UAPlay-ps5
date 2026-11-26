@@ -8,6 +8,8 @@ on:
       - 'ps5/libvlc_mpv.c'
       - 'romfs/**'
       - 'desktop/**'
+      - 'scripts/prepare-web-api.sh'
+      - 'scripts/prepare-tmdb-key.sh'
       - '.github/workflows/desktop-preview.yml'
 permissions:
   contents: read
@@ -24,6 +26,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config libsdl2-dev libsdl2-ttf-dev libsdl2-image-dev libcurl4-openssl-dev libvlc-dev vlc-plugin-base vlc-plugin-video-output libswscale-dev libavutil-dev ffmpeg ca-certificates
+      - name: Configure catalogue as in native PS5 build
+        env:
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          UAPLAY_WEB_API_URL: ${{ vars.UAPLAY_WEB_API_URL }}
+        run: |
+          bash scripts/prepare-tmdb-key.sh
+          bash scripts/prepare-web-api.sh
       - name: Build original PS5 UI on Linux
         run: bash desktop/build.sh
       - name: Portable catalogue regression checks
@@ -37,11 +46,12 @@ jobs:
         env:
           SDL_VIDEODRIVER: dummy
           SDL_AUDIODRIVER: dummy
+          UAPLAY_PREVIEW_LIVE_CATALOG: '1'
           UAPLAY_PREVIEW_SMOKE: ${{ runner.temp }}/preview-results
           UAPLAY_PREVIEW_VIDEO: ${{ runner.temp }}/preview-test.mp4
         run: |
           set -o pipefail
-          timeout 90 ./uaplay-preview 2>&1 | tee "$UAPLAY_PREVIEW_SMOKE/test.log"
+          timeout 180 ./uaplay-preview 2>&1 | tee "$UAPLAY_PREVIEW_SMOKE/test.log"
       - name: Convert screenshots to PNG
         if: always()
         run: |

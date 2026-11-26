@@ -8,6 +8,8 @@ on:
       - 'ps5/libvlc_mpv.c'
       - 'romfs/**'
       - 'desktop/**'
+      - 'scripts/prepare-web-api.sh'
+      - 'scripts/prepare-tmdb-key.sh'
       - '.github/workflows/desktop-windows.yml'
 permissions:
   contents: read
@@ -28,7 +30,7 @@ jobs:
           msystem: UCRT64
           update: true
           install: >-
-            curl unzip tar xz
+            curl unzip tar xz python
             mingw-w64-ucrt-x86_64-gcc
             mingw-w64-ucrt-x86_64-binutils
             mingw-w64-ucrt-x86_64-pkgconf
@@ -39,6 +41,13 @@ jobs:
             mingw-w64-ucrt-x86_64-ffmpeg
             mingw-w64-ucrt-x86_64-vlc
             mingw-w64-ucrt-x86_64-ca-certificates
+      - name: Configure catalogue as in native PS5 build
+        env:
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          UAPLAY_WEB_API_URL: ${{ vars.UAPLAY_WEB_API_URL }}
+        run: |
+          bash scripts/prepare-tmdb-key.sh
+          bash scripts/prepare-web-api.sh
       - name: Compile and bundle native Windows EXE
         run: bash desktop/build-windows.sh
       - name: Verify PE imports and repair missing packaged DLLs
@@ -62,6 +71,7 @@ jobs:
           $bundle = (Resolve-Path build/windows-preview).Path
           $result = (Resolve-Path build/windows-test).Path
           $env:UAPLAY_PREVIEW_SMOKE = $result
+          $env:UAPLAY_PREVIEW_LIVE_CATALOG = '1'
           $env:UAPLAY_PREVIEW_VIDEO = Join-Path $result 'test.mp4'
           $env:SDL_VIDEODRIVER = 'dummy'
           $env:SDL_AUDIODRIVER = 'dummy'
@@ -80,13 +90,13 @@ jobs:
           $log = Join-Path $result 'test.log'
           "Launching native EXE: $bundle" | Set-Content $log
           $p = Start-Process -FilePath (Join-Path $bundle 'UAPlay.exe') -WorkingDirectory $bundle -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
-          $finished = $p.WaitForExit(120000)
+          $finished = $p.WaitForExit(180000)
           if (!$finished) {
               $p.Kill()
               $p.WaitForExit()
           }
           Get-Content $stdout,$stderr -ErrorAction SilentlyContinue | Tee-Object -FilePath $log -Append
-          if (!$finished) { throw 'UAPlay process exceeded 120 seconds' }
+          if (!$finished) { throw 'UAPlay process exceeded 180 seconds' }
           $code = $p.ExitCode
           $hex = '{0:X8}' -f $code
           "Native Windows exit: $code (0x$hex)" | Tee-Object -FilePath $log -Append

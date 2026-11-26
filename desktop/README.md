@@ -23,8 +23,12 @@ alongside the EXE. VLC uses the same UCRT64 runtime and is loaded through
 uaplay-player.dll only when playback starts. No WSL, installer, admin access or controller driver is
 required. Your organization's application control policy must permit execution.
 The first Windows CI run must pass before the artifact is considered tested.
-For live catalog use, put your own TMDB key in preview-data/tmdb.key or configure
-the UAPlay-web gateway in settings. CI deliberately does not embed a secret.
+Desktop CI uses the same TMDb v3 build-key configuration as the native
+PS5 workflow and the same optional UAPlay-web gateway. The generated header
+is runner-local and must never be committed or shipped separately; the
+client API key is compiled into the binary, as in the native PS5 build.
+A local override remains possible in preview-data/tmdb.key. Prefer the
+server-side gateway for publicly distributed packages with no embedded key.
 
 The preview creates an SDL virtual DualSense-style controller automatically.
 No physical controller or system-level driver is required. Keyboard presses
@@ -57,7 +61,8 @@ This tests app-level SDL input, not the PS5's real controller driver.
 The separate Desktop Preview workflow compiles the app, runs the existing
 portable checks, generates a short H.264/AAC test clip, renders screenshots of
 the real drawing functions in light/dark themes with offline test data, and
-checks the VLC first-frame, seek and pause paths. The UI tests artifact contains
+checks the VLC first-frame, seek and pause paths. CI now also checks live TMDb
+films, series and search before accepting the package. The UI tests artifact contains
 PNG screenshots and a log, even when the runtime test fails. This is a
 render smoke test, not a complete interactive navigation test or pixel-perfect
 golden image comparison. VideoOut, PS5 hardware decoding, real DualSense

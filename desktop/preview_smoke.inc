@@ -35,12 +35,34 @@ static int preview_page(Paint *paint,Page page,Movie *movies,Source *sources,con
     draw(paint,page,movies,12,0,sources,2,0,"Популярні фільми","");
     return preview_capture(name);
 }
+/* Separate live network gate: offline screenshot fixtures cannot validate
+   a real TMDb credential or a configured Worker. Never log the request URL. */
+static int preview_live_catalog(void){
+    struct { const char *category,*query,*label; } checks[]={
+        {"films","","Films"},{"series","","Series"},{"films","Interstellar","Search"}
+    };
+    int ok=1;
+    for(unsigned i=0;i<sizeof(checks)/sizeof(checks[0]);i++){
+        Movie movie={0};
+        char error[256]={0};
+        int more=0;
+        int count=catalog_load_page_sorted(checks[i].category,checks[i].query,
+                                           1,0,&movie,1,error,sizeof(error),&more);
+        int pass=count>0 && movie.id>0 && movie.title[0] && !error[0];
+        fprintf(stderr,"[preview] live catalogue %s: %s (%d items%s%s)\n",
+                checks[i].label,pass?"PASS":"FAIL",count,
+                error[0]?"; ":"",error);
+        ok &= pass;
+    }
+    return ok;
+}
 static int preview_smoke(Paint *paint){
     Movie movies[12]={0};Source sources[2]={0};
     preview_fixture(movies,12);
     snprintf(sources[0].title,sizeof(sources[0].title),"Тестове джерело 1");
     snprintf(sources[1].title,sizeof(sources[1].title),"Тестове джерело 2");
     int ok=preview_pad_selftest();
+    int live_ok=!getenv("UAPLAY_PREVIEW_LIVE_CATALOG") || preview_live_catalog();
     for(int light=0;light<2;light++){
         ui_light_theme=light;
         ui_category=0;expanded_catalog=0;home_shelf=0;ui_search_query[0]=0;
@@ -102,5 +124,5 @@ static int preview_smoke(Paint *paint){
     }
     command(p,"stop",NULL);mpv_render_context_free(render);mpv_terminate_destroy(p);
     fprintf(stderr,"[preview] UI and local VLC smoke: %s\n",ok?"PASS":"FAIL");
-    return ok?0:1;
+    return (ok&&live_ok)?0:1;
 }
