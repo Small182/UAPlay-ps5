@@ -1286,8 +1286,17 @@ static void text_color(Paint *p,const char *str,int x,int y,int limit,
         draw_width=(width*2+1)/3;
         draw_height=(height*2+1)/3;
 #endif
-        SDL_Rect clip={x,y,limit,draw_height+1};
-        if(limit>0)SDL_RenderSetClipRect(ui_renderer,&clip);
+        SDL_Rect clip={x,y,limit,draw_height+1},old_clip;
+        SDL_bool was_clipped=SDL_RenderIsClipEnabled(ui_renderer);
+        if(was_clipped)SDL_RenderGetClipRect(ui_renderer,&old_clip);
+        if(limit>0){
+            if(was_clipped){
+                SDL_Rect intersection={0,0,0,0};
+                SDL_IntersectRect(&clip,&old_clip,&intersection);
+                clip=intersection;
+            }
+            SDL_RenderSetClipRect(ui_renderer,&clip);
+        }
 #ifdef UAPLAY_PS5_SOFTWARE
         /* Glyphs already rasterize at 1.5x logical size. Avoid rounding
            their destination back down to integer 720p coordinates. */
@@ -1299,7 +1308,7 @@ static void text_color(Paint *p,const char *str,int x,int y,int limit,
 #else
         box_alpha(p,x,y,draw_width,draw_height,r,g,b,1.f,0);
 #endif
-        if(limit>0)SDL_RenderSetClipRect(ui_renderer,NULL);
+        if(limit>0)SDL_RenderSetClipRect(ui_renderer,was_clipped?&old_clip:NULL);
         p->tex=previous;
         ui_texture_destroy(transient_texture);
         return;
@@ -1424,9 +1433,96 @@ static void wrapped(Paint *p,const char *s,int x,int y,int width,
 static void summary(Paint *p,const char *description,int x,int y,int width){
     wrapped(p,description,x,y,width,3,28,p->font_small,.72f,.77f,.82f);
 }
+/* Every poster has a fixed two-line title box, even if its title is short.
+   Keep geometry shared by drawing, pointer input and the preview tests. */
+enum { CARD_TITLE_GAP=4,CARD_TITLE_LINE=24,CARD_TITLE_H=48,CARD_ROW_GAP=8,
+       CARD_TITLE_W=166,CARD_GRID_X=54,CARD_GRID_DX=201 };
+typedef struct {int y,step,ph,pw,bottom;} CardGrid;
+static CardGrid card_grid(int category,int searching,int tabs_n,int library){
+    CardGrid g;
+    if(library){
+        g.y=162;g.ph=category==12?164:190;
+        g.bottom=category==12?614:UI_FOOTER_TOP;
+    }else{
+        g.y=searching?186:tabs_n?204:153;
+        g.ph=searching||tabs_n?172:190;
+        g.bottom=UI_FOOTER_TOP;
+    }
+    g.pw=g.ph*2/3;
+    g.step=g.ph+CARD_TITLE_GAP+CARD_TITLE_H+CARD_ROW_GAP;
+    return g;
+}
+#ifdef UAPLAY_PS5_SOFTWARE
+typedef struct {TTF_Font *font;int width;char title[512],lines[2][512];} CardText;
+static CardText card_text_cache[96];
+static unsigned card_text_next;
+static int card_utf8_next(const char *s,int i){
+    if(!s[i])return i;
+    i++;while(s[i]&&((unsigned char)s[i]&0xc0)==0x80)i++;
+    return i;
+}
+static int card_utf8_prev(const char *s,int i){
+    if(i<=0)return 0;
+    i--;while(i>0&&((unsigned char)s[i]&0xc0)==0x80)i--;
+    return i;
+}
+static int card_prefix_fit(Paint *p,const char *s,int width,TTF_Font *font){
+    /* Whole words when possible; fall back to UTF-8 boundaries for long
+       words. Never split a Cyrillic character or emit an invalid byte. */
+    int best=0,space=0;
+    char test[512];
+    for(int i=card_utf8_next(s,0);i>0&&i<(int)sizeof(test);i=card_utf8_next(s,i)){
+        memcpy(test,s,i);test[i]=0;
+        if(measure(p,test,font)>width)break;
+        best=i;
+        if(!s[i])return i;
+        if(s[i]==' ')space=i;
+    }
+    return space?space:best;
+}
+static const CardText *card_text_layout(Paint *p,const char *title,int width){
+    TTF_Font *font=p->font_card?p->font_card:p->font_small;
+    for(int i=0;i<96;i++)
+        if(card_text_cache[i].font==font&&card_text_cache[i].width==width&&
+            !strcmp(card_text_cache[i].title,title))return &card_text_cache[i];
+    CardText *c=&card_text_cache[card_text_next++%96];
+    memset(c,0,sizeof(*c));c->font=font;c->width=width;
+    snprintf(c->title,sizeof(c->title),"%s",title);
+    const char *s=c->title;
+    for(int row=0;row<2;row++){
+        while(*s==' ')s++;
+        if(!*s)break;
+        int len=card_prefix_fit(p,s,width,font);
+        if(len<=0){snprintf(c->lines[row],sizeof(c->lines[row]),"…");break;}
+        if(row==1&&s[len]){
+            char test[512];
+            /* Reserve actual ellipsis width, including on an unbroken word. */
+            while(len>0){
+                while(len>0&&s[len-1]==' ')len--;
+                snprintf(test,sizeof(test),"%.*s…",len,s);
+                if(measure(p,test,font)<=width)break;
+                len=card_utf8_prev(s,len);
+            }
+            snprintf(c->lines[row],sizeof(c->lines[row]),"%.*s…",len,s);
+            break;
+        }
+        memcpy(c->lines[row],s,len);c->lines[row][len]=0;s+=len;
+    }
+    return c;
+}
+#endif
 static void card_title(Paint *p,const char *title,int x,int y,int width){
 #ifdef UAPLAY_PS5_SOFTWARE
-    wrapped(p,title,x,y,width,2,24,p->font_card?p->font_card:p->font_small,.95f,.96f,.98f);
+    const CardText *c=card_text_layout(p,title,width);
+    SDL_Rect old,clip={x,y,width,CARD_TITLE_H};
+    SDL_bool was=SDL_RenderIsClipEnabled(ui_renderer);
+    if(was){SDL_RenderGetClipRect(ui_renderer,&old);SDL_Rect both={0};SDL_IntersectRect(&old,&clip,&both);clip=both;}
+    SDL_RenderSetClipRect(ui_renderer,&clip);
+    for(int i=0;i<2;i++)if(c->lines[i][0]){
+        int top=y+i*CARD_TITLE_LINE;
+        text_font(p,c->lines[i],x,top,width,c->font,.95f,.96f,.98f);
+    }
+    SDL_RenderSetClipRect(ui_renderer,was?&old:NULL);
 #else
     wrapped(p,title,x,y,width,2,24,p->font_small,.95f,.96f,.98f);
 #endif
@@ -2087,23 +2183,19 @@ static void draw_content(Paint *p,Page page,Movie *movies,int n,int chosen,
                 text_center_button(p,"Тут нічого немає",UI_EDGE,305,1216,110,
                                    p->font_big,.73f,.77f,.82f);
             }
+            CardGrid grid=card_grid(ui_category,0,0,1);
             const int start=chosen/12*12;
             for(int i=start;i<n && i<start+12;i++){
-                int k=i-start,x=54+k%6*201,y=162+k/6*(ui_category==12?224:245);
-                int poster_h=ui_category==12?184:206;
-                int poster_w=ui_category==12?123:138;
+                int k=i-start,x=CARD_GRID_X+k%6*CARD_GRID_DX,y=grid.y+k/6*grid.step;
                 if(i==chosen && catalog_hero_focus==0)
-                    selection_frame(p,x,y,poster_w,poster_h);
-                poster(p,&movies[i],x,y,poster_w,poster_h,&poster_budget);
-                card_title(p,movies[i].title,x,y+poster_h+3,166);
+                    selection_frame(p,x,y,grid.pw,grid.ph);
+                poster(p,&movies[i],x,y,grid.pw,grid.ph,&poster_budget);
+                card_title(p,movies[i].title,x,y+grid.ph+CARD_TITLE_GAP,CARD_TITLE_W);
             }
         }else if(expanded_catalog){
             const int searching=ui_search_query[0]!=0;
             const int tabs_n=searching?0:subsection_count(ui_category);
-            const int grid_y=searching?186:tabs_n?204:153;
-            const int step=searching?226:tabs_n?216:246;
-            const int ph=searching||tabs_n?174:190;
-            const int pw=ph*2/3;
+            const CardGrid grid=card_grid(ui_category,searching,tabs_n,0);
             if(searching){
                 char results[96];snprintf(results,sizeof(results),TR("Результати (%d)","Results (%d)"),n);
                 text(p,results,32,151,1000);
@@ -2123,10 +2215,10 @@ static void draw_content(Paint *p,Page page,Movie *movies,int n,int chosen,
             }
             int start=chosen/12*12;
             for(int i=start;i<n && i<start+12;i++){
-                int k=i-start,x=54+k%6*201,y=grid_y+k/6*step;
-                if(i==chosen && catalog_hero_focus==0)selection_frame(p,x,y,pw,ph);
-                poster(p,&movies[i],x,y,pw,ph,&poster_budget);
-                card_title(p,movies[i].title,x,y+ph+3,166);
+                int k=i-start,x=CARD_GRID_X+k%6*CARD_GRID_DX,y=grid.y+k/6*grid.step;
+                if(i==chosen && catalog_hero_focus==0)selection_frame(p,x,y,grid.pw,grid.ph);
+                poster(p,&movies[i],x,y,grid.pw,grid.ph,&poster_budget);
+                card_title(p,movies[i].title,x,y+grid.ph+CARD_TITLE_GAP,CARD_TITLE_W);
             }
             if(!n)text_center_button(p,TR("Нічого не знайдено","No results"),32,300,1216,90,p->font_big,.73f,.77f,.82f);
         }else{
@@ -2209,7 +2301,7 @@ static void draw_content(Paint *p,Page page,Movie *movies,int n,int chosen,
                 int k=i-start,x=53+k*201,y=389;
                 if(i==chosen && !catalog_hero_focus)selection_frame(p,x,y,150,221);
                 poster(p,&movies[i],x,y,150,221,&poster_budget);
-                card_title(p,movies[i].title,x,y+224,164);
+                card_title(p,movies[i].title,x,y+221+CARD_TITLE_GAP,164);
             }
         }
         footer(p,status);
@@ -3596,12 +3688,12 @@ int main(void) {
                             catalog_hero_focus=19;
                             key=SDL_CONTROLLER_BUTTON_A;
                         }
-                        if(ty>=162 && ty<613 && tx>=54){
-                            int step=category==12?224:245;
-                            int col=(tx-54)/201,row=(ty-162)/step;
+                        CardGrid grid=card_grid(category,0,0,1);
+                        if(ty>=grid.y && ty<grid.bottom && tx>=CARD_GRID_X){
+                            int col=(tx-CARD_GRID_X)/CARD_GRID_DX,row=(ty-grid.y)/grid.step;
                             int index=chosen/12*12+row*6+col;
-                            if(col<6 && row<2 && index<n && (tx-54)%201<(category==12?123:138) &&
-                               (ty-162)%step<(category==12?184:206)){
+                            if(col<6 && row<2 && index<n && (tx-CARD_GRID_X)%CARD_GRID_DX<grid.pw &&
+                               (ty-grid.y)%grid.step<grid.ph){
                                 chosen=index;
                                 catalog_hero_focus=0;
                                 clear_history_confirm=0;
@@ -3611,9 +3703,7 @@ int main(void) {
                     }
                     else if(expanded_catalog){
                         int searching=query[0]!=0,tabs_n=searching?0:subsection_count(category);
-                        int grid_y=searching?186:tabs_n?204:153;
-                        int step=searching?226:tabs_n?216:246;
-                        int ph=searching||tabs_n?174:190,pw=ph*2/3;
+                        CardGrid grid=card_grid(category,searching,tabs_n,0);
                         if(searching && ty<92 && tx<100)key=SDL_CONTROLLER_BUTTON_B;
                         else if(searching && ty>=98 && ty<144){
                             if(tx>=1050)key=SDL_CONTROLLER_BUTTON_B;
@@ -3622,10 +3712,10 @@ int main(void) {
                             catalog_hero_focus=12;key=SDL_CONTROLLER_BUTTON_A;
                         }else if(tabs_n && ty>=151 && ty<193 && tx>=32 && (tx-32)/240<tabs_n){
                             catalog_hero_focus=16+(tx-32)/240;key=SDL_CONTROLLER_BUTTON_A;
-                        }else if(ty>=grid_y && tx>=54){
-                            int col=(tx-54)/201,row=(ty-grid_y)/step;
+                        }else if(ty>=grid.y && ty<grid.bottom && tx>=CARD_GRID_X){
+                            int col=(tx-CARD_GRID_X)/CARD_GRID_DX,row=(ty-grid.y)/grid.step;
                             int index=chosen/12*12+row*6+col;
-                            if(col<6 && row<2 && index<n && (tx-54)%201<pw && (ty-grid_y)%step<ph){
+                            if(col<6 && row<2 && index<n && (tx-CARD_GRID_X)%CARD_GRID_DX<grid.pw && (ty-grid.y)%grid.step<grid.ph){
                                 chosen=index;catalog_hero_focus=0;key=SDL_CONTROLLER_BUTTON_A;
                             }
                         }

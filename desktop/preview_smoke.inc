@@ -79,12 +79,36 @@ static int preview_focus_motion(Paint *paint,Movie *movies,Source *sources){
     fprintf(stderr,"[preview] focus motion: %s\n",ok?"PASS":"FAIL");
     return ok;
 }
+static int preview_card_layout(Paint *p){
+    int ok=1;
+    CardGrid grids[]={card_grid(2,0,5,0),card_grid(1,0,0,0),
+        card_grid(2,1,0,0),card_grid(11,0,0,1),card_grid(12,0,0,1)};
+    for(unsigned i=0;i<sizeof(grids)/sizeof(grids[0]);i++){
+        CardGrid g=grids[i];
+        int h=g.ph+CARD_TITLE_GAP+CARD_TITLE_H;
+        ok &= g.step-h>=CARD_ROW_GAP && g.y+g.step+h<=g.bottom-CARD_ROW_GAP;
+    }
+    const CardText *short_title=card_text_layout(p,"Мандрівка у космос",CARD_TITLE_W);
+    ok &= short_title->lines[0][0] && short_title->lines[1][0] &&
+        measure(p,short_title->lines[0],short_title->font)<=CARD_TITLE_W &&
+        measure(p,short_title->lines[1],short_title->font)<=CARD_TITLE_W;
+    const CardText *long_title=card_text_layout(p,"Неймовірна мандрівка у космос та пригоди на далеких планетах",CARD_TITLE_W);
+    ok &= strstr(long_title->lines[1],"…")!=NULL &&
+        measure(p,long_title->lines[1],long_title->font)<=CARD_TITLE_W;
+    const CardText *long_word=card_text_layout(p,"Надзвичайнонадзвичайнодовганазвафільму",CARD_TITLE_W);
+    ok &= strstr(long_word->lines[1],"…")!=NULL &&
+        measure(p,long_word->lines[0],long_word->font)<=CARD_TITLE_W &&
+        measure(p,long_word->lines[1],long_word->font)<=CARD_TITLE_W;
+    fprintf(stderr,"[preview] two-line card titles and grid clearance: %s\n",ok?"PASS":"FAIL");
+    return ok;
+}
 static int preview_smoke(Paint *paint){
     Movie movies[12]={0};Source sources[2]={0};
     preview_fixture(movies,12);
     snprintf(sources[0].title,sizeof(sources[0].title),"Тестове джерело 1");
     snprintf(sources[1].title,sizeof(sources[1].title),"Тестове джерело 2");
     int ok=preview_pad_selftest();
+    ok &= preview_card_layout(paint);
     for(int light=0;light<2;light++){
         ui_light_theme=light;
         int ambient_ok=ui_standard_background();
@@ -111,6 +135,9 @@ static int preview_smoke(Paint *paint){
         snprintf(ui_search_query,sizeof(ui_search_query),"Тест");
         ok &= preview_page(paint,CATALOG,movies,sources,light?"search-light":"search-dark");
         ui_search_query[0]=0;
+        ui_category=11;ok &= preview_page(paint,CATALOG,movies,sources,light?"watchlist-light":"watchlist-dark");
+        ui_category=12;ok &= preview_page(paint,CATALOG,movies,sources,light?"history-light":"history-dark");
+        ui_category=2;
         ok &= preview_page(paint,DETAILS,movies,sources,light?"details-light":"details-dark");
         ok &= preview_page(paint,SETTINGS,movies,sources,light?"settings-light":"settings-dark");
         ok &= preview_page(paint,APPEARANCE,movies,sources,light?"appearance-light":"appearance-dark");
