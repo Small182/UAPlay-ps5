@@ -2872,11 +2872,14 @@ static void present_ui(SDL_Window *window){
 #endif
 int main(void) {
 #if defined(UAPLAY_DESKTOP_PREVIEW) && defined(_WIN32)
+    /* Log before the first SDL call, to distinguish loader and UI failures. */
+    setvbuf(stderr,NULL,_IONBF,0);
+    fprintf(stderr,"[Desktop Preview] Entered Windows main\n");
     /* Explorer shortcuts may supply a different working directory. */
     SDL_SetMainReady();
     char *base=SDL_GetBasePath();
     if(base){
-        if(_chdir(base)!=0){SDL_free(base);return 1;}
+        if(_chdir(base)!=0){fprintf(stderr,"[Desktop Preview] Cannot enter %s\n",base);SDL_free(base);return 1;}
         SDL_free(base);
     }
 #endif

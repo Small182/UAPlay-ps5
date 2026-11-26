@@ -14,14 +14,16 @@ void ps5_boot_trace(const char *stage,const char *detail){
 }
 SDL_Window *ps5_open_display(SDL_Renderer **renderer){
     *renderer=NULL;
-    if(SDL_Init(SDL_INIT_VIDEO)<0)return NULL;
+    ps5_boot_trace("Initializing SDL video",NULL);
+    if(SDL_Init(SDL_INIT_VIDEO)<0){ps5_boot_trace("SDL video failed",SDL_GetError());return NULL;}
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY,"1");
     SDL_Window *w=SDL_CreateWindow("UAPlay PS5 Desktop Preview",SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED,1280,720,SDL_WINDOW_SHOWN|SDL_WINDOW_RESIZABLE);
-    if(!w)return NULL;
+    if(!w){ps5_boot_trace("Window creation failed",SDL_GetError());return NULL;}
     *renderer=SDL_CreateRenderer(w,-1,SDL_RENDERER_SOFTWARE);
     if(!*renderer || SDL_RenderSetLogicalSize(*renderer,1280,720)<0 ||
        SDL_SetRenderDrawBlendMode(*renderer,SDL_BLENDMODE_BLEND)<0){
+        ps5_boot_trace("Renderer creation failed",SDL_GetError());
         if(*renderer)SDL_DestroyRenderer(*renderer);
         SDL_DestroyWindow(w);return NULL;
     }

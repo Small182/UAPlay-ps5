@@ -105,4 +105,6 @@ if [[ -d /ucrt64/share/licenses ]]; then cp -a /ucrt64/share/licenses "$out/lice
 cp desktop/README.md "$out/README.txt"
 if [[ -f LICENSE ]]; then cp LICENSE "$out/"; fi
 if [[ -f COPYING ]]; then cp COPYING "$out/"; fi
+# Pass the real Windows path to the native dependency verifier.
+cygpath -am /ucrt64/bin > "$(dirname "$out")/windows-host-bin.txt"
 echo "Portable Windows bundle: $out/UAPlay.exe"

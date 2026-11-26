@@ -40,19 +40,58 @@ jobs:
             mingw-w64-ucrt-x86_64-ca-certificates
       - name: Compile and bundle native Windows EXE
         run: bash desktop/build-windows.sh
-      - name: Create local video and test portable bundle
+      - name: Verify PE imports and repair missing packaged DLLs
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check pefile==2024.8.26
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force build/windows-test | Out-Null
+          $prefix = (Get-Content build/windows-host-bin.txt -Raw).Trim()
+          python desktop/check-windows-bundle.py build/windows-preview "$prefix" 2>&1 | Tee-Object build/windows-test/dependencies.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Create local video
         run: |
           set -euo pipefail
           mkdir -p build/windows-test
           ffmpeg -hide_banner -loglevel error -y -f lavfi -i testsrc2=size=1280x720:rate=24 -f lavfi -i sine=frequency=440:sample_rate=48000 -t 15 -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac build/windows-test/test.mp4
-          export UAPLAY_PREVIEW_SMOKE="$(cygpath -am build/windows-test)"
-          export UAPLAY_PREVIEW_VIDEO="$UAPLAY_PREVIEW_SMOKE/test.mp4"
-          export SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
-          cd build/windows-preview
-          # Exclude MSYS2's UCRT64 DLL directory from the running app's PATH.
-          # This ensures the ZIP is self-contained rather than relying on CI.
-          PATH=/usr/bin:/c/Windows/System32:/c/Windows timeout 120 ./UAPlay.exe 2>&1 | tee "$UAPLAY_PREVIEW_SMOKE/test.log"
-          rm -rf preview-data
+      - name: Test EXE with native Windows launcher and no toolchain PATH
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bundle = (Resolve-Path build/windows-preview).Path
+          $result = (Resolve-Path build/windows-test).Path
+          $env:UAPLAY_PREVIEW_SMOKE = $result
+          $env:UAPLAY_PREVIEW_VIDEO = Join-Path $result 'test.mp4'
+          $env:SDL_VIDEODRIVER = 'dummy'
+          $env:SDL_AUDIODRIVER = 'dummy'
+          $env:VLC_PLUGIN_PATH = Join-Path $bundle 'plugins'
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          Add-Type -TypeDefinition @'
+          using System.Runtime.InteropServices;
+          public static class NativeErrorMode {
+              [DllImport("kernel32.dll")] public static extern uint SetErrorMode(uint mode);
+          }
+          '@
+          # No modal loader/crash dialogs: report the native NTSTATUS instead.
+          [void][NativeErrorMode]::SetErrorMode(0x8003)
+          $stdout = Join-Path $result 'stdout.log'
+          $stderr = Join-Path $result 'stderr.log'
+          $log = Join-Path $result 'test.log'
+          "Launching native EXE: $bundle" | Set-Content $log
+          $p = Start-Process -FilePath (Join-Path $bundle 'UAPlay.exe') -WorkingDirectory $bundle -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+          $finished = $p.WaitForExit(120000)
+          if (!$finished) {
+              $p.Kill()
+              $p.WaitForExit()
+          }
+          Get-Content $stdout,$stderr -ErrorAction SilentlyContinue | Tee-Object -FilePath $log -Append
+          if (!$finished) { throw 'UAPlay process exceeded 120 seconds' }
+          $code = $p.ExitCode
+          $hex = '{0:X8}' -f $code
+          "Native Windows exit: $code (0x$hex)" | Tee-Object -FilePath $log -Append
+          if ($code -ne 0) { throw "UAPlay test failed: 0x$hex" }
+          if (!(Test-Path (Join-Path $result 'player-paused.bmp'))) { throw 'No player screenshot produced' }
+          Remove-Item (Join-Path $bundle 'preview-data') -Recurse -Force -ErrorAction SilentlyContinue
       - name: Convert UI screenshots
         if: always()
         run: |
@@ -66,7 +105,7 @@ jobs:
           name: UAPlay-PS5-Windows-UI-tests
           path: |
             build/windows-test/*.png
-            build/windows-test/test.log
+            build/windows-test/*.log
           if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         if: success()
