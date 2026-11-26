@@ -1375,10 +1375,28 @@ static void text_center(Paint *p,const char *s,int x,int y,int width,TTF_Font *f
     if(left<x)left=x;
     text_font(p,s,left,y,width-(left-x),font,r,g,b);
 }
+#ifdef UAPLAY_PS5_SOFTWARE
+static int text_midline_top(Paint *p,const char *s,TTF_Font *font,int cy){
+    TTF_Font *old=p->font;p->font=font?font:old;
+    TTF_Font *actual=choose_font(p,s);p->font=old;
+    int minx=0,maxx=0,miny=0,maxy=0,advance=0;
+    if(actual&&TTF_GlyphMetrics(actual,'H',&minx,&maxx,&miny,&maxy,&advance)==0&&maxy>miny){
+        /* Center the visible cap height instead of the font's full line box.
+           The slight downward optical correction accommodates descenders. */
+        float center=(TTF_FontAscent(actual)-(maxy+miny)*.5f)/1.5f;
+        return (int)roundf(cy-center-.5f);
+    }
+    return cy-text_height(p,s,font)/2;
+}
+#endif
 static void text_center_button(Paint *p,const char *s,int x,int y,int width,int height,
                                TTF_Font *font,float r,float g,float b){
+#ifdef UAPLAY_PS5_SOFTWARE
+    int top=text_midline_top(p,s,font,y+height/2);
+#else
     int glyph_height=text_height(p,s,font);
     int top=y+(height-glyph_height)/2;
+#endif
     text_center(p,s,x,top,width,font,r,g,b);
 }
 /* Word-based wrapping avoids slicing a UTF-8 code point into replacement boxes. */
@@ -1487,10 +1505,10 @@ static void button(Paint *p,const char *label,int x,int y,int w,int h,int primar
     SDL_Color fill=primary?(SDL_Color){color_byte(ar),color_byte(ag),color_byte(ab),255}:ui_rgb(ui_theme_enabled&&ui_light_theme?0xe1e7ed:0x28343e,244);
     if(primary&&ui_light_theme&&ui_accent_index==ACCENT_WHITE)fill=ui_rgb(0x26333e,255);
     SDL_Color fg=primary?ui_rgb((.2126f*fill.r+.7152f*fill.g+.0722f*fill.b)>143?0x101b21:0xffffff,255):ui_fg();
-    SDL_Rect rect={x,y,w,h};rounded_box(rect,14,fill,NULL);
-    if(!primary)rounded_outline(rect,14,1,ui_rgb(ui_light_theme?0xc4ced9:0x495967,105));
-    if(icon!=I_NONE)ui_labeled_icon(p,icon,s,x,y,w,h,fg);
-    else ui_center_color(p,s,x,y,w,h,p->font_label?p->font_label:p->font_small,fg);
+    SDL_Rect rect={x,y,w,h};
+    int dy=ui_button_depth(rect,14,fill,ui_is_focused(rect));
+    if(icon!=I_NONE)ui_labeled_icon(p,icon,s,x,y+dy,w,h,fg);
+    else ui_center_color(p,s,x,y+dy,w,h,p->font_label?p->font_label:p->font_small,fg);
 #else
     /* Flat fills: no simulated border/shadow in Basic White. */
     float secondary=ui_light_theme?.11f:.15f;
@@ -1585,21 +1603,35 @@ static void gear_icon(Paint *p,int cx,int cy,float bg_r,float bg_g,float bg_b){
 }
 static void web_header_bg(Paint *p,int height){
     int old=ui_theme_enabled;ui_theme_enabled=0;
+#ifdef UAPLAY_PS5_SOFTWARE
+    SDL_Color top=ui_rgb(ui_light_theme?0xf7f9fc:0x141b27,250);
+    SDL_Color bottom=ui_rgb(ui_light_theme?0xeaf0f6:0x0e141f,244);
+    SDL_Vertex v[4]={{{0,0},top,{0,0}},{{1280,0},top,{0,0}},
+        {{1280,height},bottom,{0,0}},{{0,height},bottom,{0,0}}};
+    int ix[]={0,1,2,0,2,3};SDL_RenderGeometry(ui_renderer,NULL,v,4,ix,6);
+    SDL_SetRenderDrawColor(ui_renderer,ui_light_theme?130:153,ui_light_theme?151:179,ui_light_theme?174:207,24);
+    SDL_RenderDrawLine(ui_renderer,0,height-1,1280,height-1);
+#else
     box_alpha(p,0,0,1280,height,ui_light_theme?245.f/255:15.f/255,
               ui_light_theme?247.f/255:18.f/255,ui_light_theme?249.f/255:21.f/255,1.f,0);
+#endif
     ui_theme_enabled=old;
 }
 static void screen_header(Paint *p,const char *name,const char *context){
     web_header_bg(p,92);
-    box_alpha(p,UI_EDGE,23,55,48,.13f,.16f,.20f,1.f,13);
 #ifdef UAPLAY_PS5_SOFTWARE
+    ui_button_depth((SDL_Rect){UI_EDGE,23,55,48},13,ui_rgb(ui_light_theme?0xe0e7ef:0x26323f,255),0);
     ui_icon(I_BACK,UI_EDGE+27.5f,47,27,ui_fg());
+    ui_header_left(p,name,105,860,47,p->font_big,ui_fg());
+    if(context && *context && strcmp(context,"UAPlay"))
+        ui_header_left(p,context,979,264,47,p->font_tiny,ui_muted());
 #else
+    box_alpha(p,UI_EDGE,23,55,48,.13f,.16f,.20f,1.f,13);
     text_center(p,"‹",UI_EDGE,25,55,p->font_big,.96f,.97f,.99f);
-#endif
     headline(p,name,105,23,860);
     if(context && *context && strcmp(context,"UAPlay"))
         text_tiny(p,context,979,38,264);
+#endif
 }
 static void list_row(Paint *p,const char *title,int y,int selected,
                      const char *detail){
@@ -1806,6 +1838,7 @@ static void draw_content(Paint *p,Page page,Movie *movies,int n,int chosen,
     box_alpha(p,0,0,1280,720,.034f,.042f,.054f,1.f,0);
     ui_gradient_pass=0;
 #ifdef UAPLAY_PS5_SOFTWARE
+    ui_standard_background();
     if(wallpapers_texture()){
         SDL_Texture *bg=(SDL_Texture *)(uintptr_t)wallpapers_texture();
         int w=wallpapers_width(),h=wallpapers_height();
@@ -1894,13 +1927,17 @@ static void draw_content(Paint *p,Page page,Movie *movies,int n,int chosen,
             box_alpha(p,32,98,1000,46,.13f,.16f,.19f,1.f,14);
             if(catalog_hero_focus==5)selection_frame(p,32,98,1000,46);
             search_icon(p,58,121,.13f,.16f,.19f);
+#ifdef UAPLAY_PS5_SOFTWARE
+            ui_header_left(p,ui_search_query,88,925,121,p->font,ui_fg());
+#else
             text(p,ui_search_query,88,106,925);
+#endif
             if(catalog_hero_focus==14)selection_frame(p,1050,98,198,46);
             button(p,TR("Закрити","Close"),1050,98,198,46,0);
         }else{
         web_header_bg(p,80);
 #ifdef UAPLAY_PS5_SOFTWARE
-        text_font(p,"UAPlay",25,18,166,p->font_brand,1.f,1.f,1.f);
+        ui_header_left(p,"UAPlay",25,166,40,p->font_brand?p->font_brand:p->font_big,ui_fg());
 #else
         headline(p,"UAPlay",25,18,166);
 #endif
@@ -1910,9 +1947,16 @@ static void draw_content(Paint *p,Page page,Movie *movies,int n,int chosen,
         int focused=page==CATALOG?catalog_hero_focus:IPTV_TAB_FOCUS;
         for(int i=0;i<MAIN_TAB_COUNT;i++){
             int x=main_tabs[i].x,w=main_tabs[i].w,focus=main_tabs[i].focus;
-            if(focus==active)box_alpha(p,x,19,w,43,.19f,.24f,.28f,1.f,16);
             if(focus==focused)selection_frame(p,x,19,w,43);
+#ifdef UAPLAY_PS5_SOFTWARE
+            int dy=0;
+            if(focus==active||focus==focused)
+                dy=ui_button_depth((SDL_Rect){x,19,w,43},15,ui_rgb(ui_light_theme?0xdbe4ed:0x2b3948,255),focus==focused);
+            text_center_button(p,tabs[i],x,19+dy,w,43,
+#else
+            if(focus==active)box_alpha(p,x,19,w,43,.19f,.24f,.28f,1.f,16);
             text_center_button(p,tabs[i],x,19,w,43,
+#endif
 #ifdef UAPLAY_PS5_SOFTWARE
                                p->font_label?p->font_label:p->font_small,
 #else
@@ -1922,6 +1966,15 @@ static void draw_content(Paint *p,Page page,Movie *movies,int n,int chosen,
             press_preview(p,x,19,w,43,16);
         }
         /* Search is a real touch target, not a missing Unicode glyph. */
+#ifdef UAPLAY_PS5_SOFTWARE
+        SDL_Color top_button=ui_rgb(ui_light_theme?0xe0e7ef:0x25323f,255);
+        if(focused==5)selection_frame(p,887,17,157,47);
+        int search_dy=ui_button_depth((SDL_Rect){887,17,157,47},15,top_button,focused==5);
+        ui_labeled_icon(p,I_SEARCH,TR("Пошук","Search"),887,17+search_dy,157,47,ui_fg());
+        if(focused==6)selection_frame(p,1058,17,53,47);
+        int gear_dy=ui_button_depth((SDL_Rect){1058,17,53,47},15,top_button,focused==6);
+        ui_icon(I_GEAR,1084.5f,40.f+gear_dy,27,ui_fg());
+#else
         box_alpha(p,887,17,157,47,.13f,.16f,.19f,1.f,15);
         if(focused==5)selection_frame(p,887,17,157,47);
         search_icon(p,912,40,.13f,.16f,.19f);
@@ -1932,17 +1985,16 @@ static void draw_content(Paint *p,Page page,Movie *movies,int n,int chosen,
         if(focused==6)selection_frame(p,1058,17,53,47);
         gear_icon(p,1084,40,.13f,.16f,.19f);
         press_preview(p,1058,17,53,47,15);
+#endif
         time_t now=time(NULL);
         struct tm *local=localtime(&now);
         char clock_label[32]="--:--";
         if(local)strftime(clock_label,sizeof(clock_label),"%H:%M",local);
-        text_font(p,clock_label,1116,18,106,
 #ifdef UAPLAY_PS5_SOFTWARE
-                  p->font_clock?p->font_clock:p->font_big,
+        ui_center_color(p,clock_label,1116,0,126,80,p->font_clock?p->font_clock:p->font_big,ui_fg());
 #else
-                  p->font_big,
+        text_font(p,clock_label,1116,18,106,p->font_big,.95f,.97f,.99f);
 #endif
-                  .95f,.97f,.99f);
         }
         if(page==IPTV_CHANNELS){
             int nc=0,ng=0;
@@ -2667,18 +2719,20 @@ static void draw_player_controls(Paint *p,mpv_handle *player,const Movie *movie)
         mpv_get_property(player,"duration",MPV_FORMAT_DOUBLE,&duration);
         mpv_get_property(player,"pause",MPV_FORMAT_FLAG,&paused);
     }
-    box_alpha(p,32,27,141,49,.045f,.063f,.079f,.92f,14);
 #ifdef UAPLAY_PS5_SOFTWARE
+    ui_button_depth((SDL_Rect){32,27,141,49},14,ui_rgb(0x26333e,232),0);
     ui_labeled_icon(p,I_BACK,"Назад",32,27,141,49,ui_fg());
 #else
+    box_alpha(p,32,27,141,49,.045f,.063f,.079f,.92f,14);
     text_center(p,"‹  Назад",32,37,141,p->font_small,.96f,.97f,.99f);
 #endif
     if(active_episode_variant>=0 &&
        catalog_next_episode(episodes,episode_count,active_episode_variant)>=0){
-        box_alpha(p,969,27,275,49,.045f,.063f,.079f,.92f,14);
 #ifdef UAPLAY_PS5_SOFTWARE
+        ui_button_depth((SDL_Rect){969,27,275,49},14,ui_rgb(0x26333e,232),0);
         ui_labeled_icon(p,I_FORWARD,"Наступна серія",969,27,275,49,ui_fg());
 #else
+        box_alpha(p,969,27,275,49,.045f,.063f,.079f,.92f,14);
         text_center(p,"»  Наступна серія",969,37,275,
                     p->font_small,.96f,.97f,.99f);
 #endif
@@ -2740,9 +2794,8 @@ static void draw_player_controls(Paint *p,mpv_handle *player,const Movie *movie)
 #ifdef UAPLAY_PS5_SOFTWARE
         if(ps5_player_focus==i)selection_frame(p,centers[i]-w/2,top,w,w);
         SDL_Rect rect={centers[i]-w/2,top,w,w};
-        rounded_box(rect,w/2,ui_rgb(i==1?0xe9f0f3:0x26333c,i==1?255:230),NULL);
-        if(i!=1)rounded_outline(rect,w/2,1,ui_rgb(0x71818c,115));
-        ui_icon(icons[i],centers[i],top+w*.5f,i==1?35:27,ui_rgb(i==1?0x14212a:0xf4f6f8,255));
+        int dy=ui_button_depth(rect,w/2,ui_rgb(i==1?0xe9f0f3:0x26333c,i==1?255:240),ps5_player_focus==i);
+        ui_icon(icons[i],centers[i],top+w*.5f+dy,i==1?35:27,ui_rgb(i==1?0x14212a:0xf4f6f8,255));
 #else
         box_alpha(p,centers[i]-w/2,top,w,w,.18f,.22f,.26f,.94f,w/2);
         text_center(p,icons[i],centers[i]-w/2,top+(w-28)/2,w,
@@ -5061,6 +5114,7 @@ int main(void) {
 cleanup_paint:
 #ifdef UAPLAY_PS5_SOFTWARE
     ui_icon_cache_destroy();
+    ui_ambient_destroy();
 #endif
     text_cache_destroy();
     for(int i=0;i<7;i++){

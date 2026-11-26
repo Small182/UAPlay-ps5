@@ -85,6 +85,12 @@ static int preview_smoke(Paint *paint){
     snprintf(sources[0].title,sizeof(sources[0].title),"Тестове джерело 1");
     snprintf(sources[1].title,sizeof(sources[1].title),"Тестове джерело 2");
     int ok=preview_pad_selftest();
+    for(int light=0;light<2;light++){
+        ui_light_theme=light;
+        int ambient_ok=ui_standard_background();
+        fprintf(stderr,"[preview] standard %s ambient: %s\n",light?"light":"dark",ambient_ok?"PASS":"FAIL");
+        ok &= ambient_ok && preview_capture(light?"ambient-light":"ambient-dark");
+    }
     fprintf(stderr,"[preview] bundled web typography: %s\n",paint->web_font_faces?"PASS":"FAIL");
     ok &= paint->web_font_faces;
     int raster_w=0,raster_h=0;

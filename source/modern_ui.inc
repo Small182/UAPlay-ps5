@@ -231,3 +231,113 @@ static void ui_panel(Paint *p,int x,int y,int w,int h,int radius){
  rounded_outline((SDL_Rect){x,y,w,h},radius,1,ui_rgb(ui_light_theme?0xd1d9e1:0x526272,90));
  (void)p;
 }
+
+/* PS5-inspired ambient background. Original procedural artwork, no external
+   download, no Sony assets. Two cached textures; never drawn over playback. */
+static SDL_Texture *ui_ambient[2];
+static unsigned ui_noise(unsigned v){v^=v>>16;v*=0x7feb352du;v^=v>>15;v*=0x846ca68bu;return v^(v>>16);}
+static SDL_Texture *ui_ambient_create(int light){
+    enum {W=1280,H=720};
+    SDL_Surface *s=SDL_CreateRGBSurfaceWithFormat(0,W,H,32,SDL_PIXELFORMAT_RGBA32);
+    if(!s)return NULL;
+    for(int y=0;y<H;y++){
+        Uint8 *row=(Uint8*)s->pixels+y*s->pitch;
+        float fy=(float)y/(H-1);
+        for(int x=0;x<W;x++){
+            float fx=(float)x/(W-1);
+            float dx=fx-.79f,dy=fy-.23f;
+            float cool=expf(-5.5f*dx*dx-7.5f*dy*dy);
+            float wave=fy-(.72f-.25f*fx+.10f*sinf(fx*3.2f));
+            float ribbon=expf(-wave*wave*55.f)*(.36f+.64f*fx);
+            float warm=expf(-14.f*(fx-.78f)*(fx-.78f)-12.f*(fy-.80f)*(fy-.80f));
+            float vignette=(fx-.5f)*(fx-.5f)+(fy-.5f)*(fy-.5f);
+            float dither=((int)(ui_noise((unsigned)(y*W+x))&255)-128)/128.f;
+            float red,green,blue;
+            if(light){red=237-9*cool+4*ribbon+3*warm-4*vignette;
+                green=241-5*cool+3*ribbon-4*vignette;blue=247-2*cool-4*warm-4*vignette;}
+            else {red=10+9*cool+7*ribbon+12*warm-5*vignette;
+                green=14+15*cool+9*ribbon+7*warm-5*vignette;
+                blue=23+26*cool+12*ribbon+1*warm-6*vignette;}
+            row[4*x]=(Uint8)fminf(255,fmaxf(0,red+dither));
+            row[4*x+1]=(Uint8)fminf(255,fmaxf(0,green+dither));
+            row[4*x+2]=(Uint8)fminf(255,fmaxf(0,blue+dither));
+            row[4*x+3]=255;
+        }
+    }
+    /* Sparse, subdued dust towards the right, like an ambient console theme.
+       No particle simulation or per-frame generation. */
+    if(!light)for(unsigned i=0;i<94;i++){
+        unsigned h=ui_noise(i+191u);
+        int x=520+(int)(h%745),y=75+(int)((h>>10)%610);
+        int strength=7+(int)((h>>24)&15);
+        for(int yy=-2;yy<=2;yy++)for(int xx=-2;xx<=2;xx++){
+            int px=x+xx,py=y+yy;
+            if(px<0||px>=W||py<0||py>=H)continue;
+            float d=xx*xx+yy*yy;int add=(int)(strength*expf(-d*.85f));
+            Uint8 *p=(Uint8*)s->pixels+py*s->pitch+px*4;
+            p[0]=(Uint8)fminf(255,p[0]+add);p[1]=(Uint8)fminf(255,p[1]+add*.85f);
+            p[2]=(Uint8)fminf(255,p[2]+add*.58f);
+        }
+    }
+    SDL_Texture *tex=SDL_CreateTextureFromSurface(ui_renderer,s);SDL_FreeSurface(s);
+    if(tex){SDL_SetTextureBlendMode(tex,SDL_BLENDMODE_NONE);SDL_SetTextureScaleMode(tex,SDL_ScaleModeLinear);}
+    return tex;
+}
+static int ui_standard_background(void){
+    int light=!!ui_light_theme;
+    if(!ui_ambient[light])ui_ambient[light]=ui_ambient_create(light);
+    if(!ui_ambient[light])return 0;
+    SDL_Rect dst={0,0,1280,720};
+    return SDL_RenderCopy(ui_renderer,ui_ambient[light],NULL,&dst)==0;
+}
+static void ui_ambient_destroy(void){
+    for(int i=0;i<2;i++)if(ui_ambient[i]){SDL_DestroyTexture(ui_ambient[i]);ui_ambient[i]=NULL;}
+}
+static SDL_Color ui_mix(SDL_Color a,SDL_Color b,float t){
+    return (SDL_Color){a.r+(b.r-a.r)*t,a.g+(b.g-a.g)*t,a.b+(b.b-a.b)*t,a.a+(b.a-a.a)*t};
+}
+/* Rounded gradient with one physical pixel coverage fringe, matching
+   the high resolution rounded_box geometry. */
+static void ui_gradient_round(SDL_Rect rect,float radius,SDL_Color top,SDL_Color bottom){
+    if(rect.w<=0||rect.h<=0)return;
+    SDL_FRect r={rect.x,rect.y,rect.w,rect.h};
+    float rad=fminf(radius,fminf(r.w,r.h)*.5f),aa=fminf(ui_pixel(),rad*.5f);
+    SDL_Vertex v[1+2*UI_PERIM];int ix[9*UI_PERIM];
+    v[0]=(SDL_Vertex){{r.x+r.w*.5f,r.y+r.h*.5f},ui_mix(top,bottom,.5f),{0,0}};
+    for(int k=0;k<UI_PERIM;k++){
+        int a=1+2*k,b=1+2*((k+1)%UI_PERIM);
+        SDL_FPoint p=ui_round_point(r,rad,k,-aa*.5f),q=ui_round_point(r,rad,k,aa*.5f);
+        SDL_Color c=ui_mix(top,bottom,fminf(1.f,fmaxf(0.f,(p.y-r.y)/r.h))),clear=c;clear.a=0;
+        v[a]=(SDL_Vertex){p,c,{0,0}};v[a+1]=(SDL_Vertex){q,clear,{0,0}};
+        int j=k*9;ix[j]=0;ix[j+1]=a;ix[j+2]=b;ix[j+3]=a;ix[j+4]=a+1;ix[j+5]=b;
+        ix[j+6]=b;ix[j+7]=a+1;ix[j+8]=b+1;
+    }
+    SDL_RenderGeometry(ui_renderer,NULL,v,1+2*UI_PERIM,ix,9*UI_PERIM);
+}
+static int ui_is_focused(SDL_Rect r){return ui_focus.seen&&SDL_RectEquals(&r,&ui_focus.target);}
+static int ui_button_depth(SDL_Rect rect,int radius,SDL_Color base,int focused){
+    int light=ui_theme_enabled&&ui_light_theme;
+    float age=(float)(SDL_GetTicks()-ui_press_at);
+    float press=focused&&ui_press_at&&age<145.f?sinf(3.14159265f*age/145.f):0.f;
+    int drop=(int)roundf(2.f*press),lift=focused?1:0;
+    /* Keep the logical hit rectangle fixed. Only the face moves 0–2 px. */
+    SDL_Rect shadow={rect.x-1,rect.y+2+lift,rect.w+2,rect.h+2};
+    rounded_box(shadow,radius+1,ui_rgb(0x000000,(int)((light?23:48)*(1.f-.65f*press))),NULL);
+    shadow=(SDL_Rect){rect.x,rect.y+4+lift,rect.w,rect.h};
+    rounded_box(shadow,radius,ui_rgb(0x000000,(int)((light?13:30)*(1.f-.65f*press))),NULL);
+    SDL_Rect face=rect;face.y+=drop;
+    SDL_Color white=ui_rgb(0xffffff,base.a),black=ui_rgb(0x000000,base.a);
+    SDL_Color top=ui_mix(base,white,(light?.15f:.105f)+(focused?.035f:0.f));
+    SDL_Color bottom=ui_mix(base,black,light?.055f:.17f);
+    top=ui_mix(top,black,.12f*press);bottom=ui_mix(bottom,black,.09f*press);
+    ui_gradient_round(face,radius,top,bottom);
+    SDL_Rect inside={face.x+1,face.y+1,face.w-2,face.h-2};
+    rounded_outline(inside,radius-1,1,ui_rgb(light?0xffffff:0xd2e4f7,light?125:31));
+    rounded_outline(face,radius,1,ui_rgb(light?0x586e82:0x000000,light?46:62));
+    return drop;
+}
+static void ui_header_left(Paint *p,const char *s,int x,int width,int cy,TTF_Font *font,SDL_Color c){
+    int old=ui_theme_enabled;ui_theme_enabled=0;
+    text_font(p,s,x,text_midline_top(p,s,font,cy),width,font,c.r/255.f,c.g/255.f,c.b/255.f);
+    ui_theme_enabled=old;
+}
